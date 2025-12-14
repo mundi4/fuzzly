@@ -1,5 +1,5 @@
-import type { MatchRange, StrokeMatchMap } from "./types";
 import { compressMatchIndexes } from "./compressMatchIndexes";
+import type { MatchRange, StrokeMatchMap } from "./types";
 
 export function mergeMatches(
     perToken: StrokeMatchMap[]

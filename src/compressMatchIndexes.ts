@@ -1,4 +1,4 @@
-import { MatchRange } from "./types";
+import type { MatchRange } from "./types";
 
 export function compressMatchIndexes(indexes: number[]): MatchRange[] {
     if (indexes.length === 0) return [];
