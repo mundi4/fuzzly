@@ -1,5 +1,4 @@
-import type { FuzzyStrokes, StrokeMatchMap } from "./types";
-import { FuzzQuery } from ".";
+import type { FuzzyQuery, FuzzyStrokes, StrokeMatchMap } from "./types";
 
 /**
  * text: literal query text (이미 buildFuzzQuery에서 따옴표 처리 끝난 상태라고 가정)
@@ -12,7 +11,7 @@ import { FuzzQuery } from ".";
  *   - 값 = 해당 part 안에서의 grapheme 인덱스 배열
  *   - 한 번의 호출에서는 "가장 먼저 매치된 part" 하나만 세팅
  */
-export function matchLiteral(query: FuzzQuery, parts: FuzzyStrokes[]): StrokeMatchMap | null {
+export function matchLiteral(query: FuzzyQuery, parts: FuzzyStrokes[]): StrokeMatchMap | null {
     const text = query.text;
     if (text === "") {
         return [];
