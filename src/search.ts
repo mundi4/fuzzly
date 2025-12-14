@@ -13,7 +13,7 @@ export interface SearchOptions {
      * Fields to search within each item
      * Can be field names (string) or accessor functions
      */
-    keys?: string[] | ((item: any) => string)[];
+    keys?: (string | ((item: any) => string))[];
 
     /**
      * Whether to allow spillover of final consonants (받침) to next character
@@ -75,11 +75,24 @@ export interface SearchResult<T = any> {
 }
 
 /**
+ * Internal resolved options (all required except limit)
+ */
+interface ResolvedSearchOptions {
+    keys: (string | ((item: any) => string))[];
+    allowTailSpillover: boolean;
+    whitespaceMode: 'boundary' | 'split' | 'literal';
+    threshold: number;
+    sort: boolean;
+    limit: number | undefined;
+    caseSensitive: boolean;
+}
+
+/**
  * Internal search context
  */
 interface SearchContext<T> {
     items: T[];
-    options: Required<Omit<SearchOptions, 'limit'>> & { limit?: number };
+    options: ResolvedSearchOptions;
     query: string;
     queries: string[];
 }
@@ -265,7 +278,8 @@ function extractFields<T>(item: T, keys: (string | ((item: T) => string))[]): st
                 fields.push(String(value));
             }
         } else if (typeof key === 'string') {
-            const value = (item as any)[key];
+            // Type-safe property access with proper checking
+            const value = (item as Record<string, unknown>)?.[key];
             if (value !== undefined && value !== null) {
                 fields.push(String(value));
             }

@@ -340,6 +340,9 @@ describe("getMatchRanges helper", () => {
 
 describe("edge cases", () => {
     it("should handle undefined/null items gracefully", () => {
+        // Note: The API converts all items to strings via String() constructor
+        // null becomes "null" and undefined becomes "undefined"
+        // This is intentional for maximum flexibility
         const items = [null, undefined, "가나다"];
         const results = search("가", items as any);
         
@@ -348,6 +351,8 @@ describe("edge cases", () => {
     });
 
     it("should handle numeric items", () => {
+        // Note: Numeric items are converted to strings for searching
+        // This allows the API to work with any primitive type
         const items = [123, 456, 789];
         const results = search("123", items as any);
         
