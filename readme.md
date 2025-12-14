@@ -4,6 +4,44 @@
 
 커맨드팔레트(어렴풋이 기억나는 글자나 초성 몇 개 입력-> 결과 추리기-> 바로 실행)에서의 사용이 목적이기 때문에:
 
+## 🚀 빠른 시작
+
+```typescript
+import { search } from 'fuzzly';
+
+// 간단한 문자열 검색
+const results = search('ㅇㅎㅇ', ['안녕하세요', '반갑습니다']);
+
+// 객체 배열 검색
+const commands = [
+  { name: '파일 열기', cmd: 'open' },
+  { name: '파일 닫기', cmd: 'close' }
+];
+const results = search('파열', commands, { keys: ['name'] });
+```
+
+**📖 완전한 API 문서는 [API.md](./API.md)를 참고하세요.**
+
+## 주요 기능
+
+### ✨ 유연한 Public API
+
+- **`search(query, items, options)`** - 메인 검색 함수 (옵션 설정 가능)
+- **`matches(query, item, options)`** - 빠른 매칭 체크
+- **`getMatchRanges(query, item, options)`** - 하이라이트용 매칭 범위 반환
+
+### 🎯 다양한 검색 옵션
+
+- **keys**: 검색할 필드 지정 (문자열 또는 함수)
+- **allowTailSpillover**: 받침 spillover 허용 여부
+- **whitespaceMode**: 공백 처리 방식 ('split' | 'boundary' | 'literal')
+- **threshold**: 매칭 품질 임계값
+- **sort**: 관련도순 정렬
+- **limit**: 결과 개수 제한
+- **caseSensitive**: 대소문자 구분
+
+### 🔍 검색 기능
+
 1. 완전한 단어나 글자를 기대하지 말고  
    사용자가 어렴풋이 기억하고 있는 글자나 초성을 순서대로(하지만 연속적일 필요는 없음) 입력하는 것 만으로  
    원하는 결과를 찾아낼 수 있어야 함.
