@@ -22,7 +22,6 @@ export function buildFuzzyQuery(input: string): FuzzyQuery | null {
     // literal이 아닌 경우: 모든 따옴표 제거
     // 이건 고민을 좀 해봐야함. '"'를 검색을 하고 싶을 수도 있다.
     const cleaned = input.replace(/"/g, "");
-
     if (cleaned === "") {
         return null;
     }
@@ -57,7 +56,7 @@ export function buildFuzzyQuery(input: string): FuzzyQuery | null {
             strokes,
             vowelIndex,
             tailIndex,
-            allowTailSpillover: true,
+            allowTailSpillover: false, // 임시로 false로 설정. 호출하는 쪽에서 마지막 쿼리의 마지막 char에 대해 true로 설정할 것.
         });
     }
 
