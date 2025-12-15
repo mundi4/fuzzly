@@ -3,7 +3,12 @@ export type {
     Query,
     QueryGrapheme,
     Target,
-    MatchRange
+    MatchRange,
+    GraphemeIndices,
+    Atoms,
+    QueryOptions,
+    TargetOptions,
+    MatchOptions,
 } from "./types";
 
 // Core builders

@@ -1,12 +1,12 @@
-import type { BuildQueryOptions, Query, QueryGrapheme } from "./types";
+import type { QueryOptions, Query, QueryGrapheme } from "./types";
 import { decomposeToAtoms, isVowel } from "./internal/utils";
 import segmenter from "./internal/segmenter";
 
-const DEFAULT_OPTIONS: BuildQueryOptions = {
+const DEFAULT_OPTIONS: QueryOptions = {
     caseSensitive: false,
 };
 
-export function buildQuery(input: string, options: BuildQueryOptions = DEFAULT_OPTIONS): Query {
+export function buildQuery(input: string, options: QueryOptions = DEFAULT_OPTIONS): Query {
     options = { ...DEFAULT_OPTIONS, ...options };
 
     // literal 조건: 앞뒤 모두 " 로 감싸져 있는 경우만

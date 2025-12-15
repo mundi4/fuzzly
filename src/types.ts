@@ -30,7 +30,7 @@ export type MatchRange = {
     end: number;
 }
 
-export type BuildQueryOptions = {
+export type QueryOptions = {
     caseSensitive?: boolean;
 }
 
