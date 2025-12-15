@@ -1,74 +1,62 @@
-import type { FuzzyStrokes, MatchRange, StrokeMatchMap } from "./types";
-import { compressMatchIndexes } from "./compressMatchIndexes";
+import type { Target, MatchRange, GraphemeIndices } from "./types";
 
+/**
+ * hitMaps과 Target을 받아서 MatchRange[]로 변환
+ * 
+ * 과정:
+ * 1. 모든 indices 수집 + 정렬
+ * 2. dedup과 range 변환을 한 번의 loop에서 처리
+ */
 export function buildMatchRanges(
-    perToken: StrokeMatchMap[],
-    parts: FuzzyStrokes[]
-): Array<MatchRange[] | undefined> {
+    hitMaps: GraphemeIndices[],
+    target: Target
+): MatchRange[] {
+    // 모든 indices 수집
+    let indices: number[];
 
-    // part별 cluster index 누적 (undefined | number[])
-    const mergedClusters: Array<number[] | undefined> = [];
-
-    for (const tokenResult of perToken) {
-        for (let pi = 0; pi < tokenResult.length; pi++) {
-            const clusters = tokenResult[pi];
-            if (!clusters || clusters.length === 0) continue;
-
-            let bucket = mergedClusters[pi];
-            if (!bucket) {
-                bucket = [];
-                mergedClusters[pi] = bucket;
-            }
-
-            bucket.push(...clusters);
+    if (hitMaps.length === 1) {
+        // 정렬이 되어있다고 가정함
+        indices = hitMaps[0];
+    } else if (hitMaps.length === 0) {
+        return [];
+    } else {
+        indices = [];
+        for (const hitMap of hitMaps) {
+            if (hitMap) indices.push(...hitMap);
         }
+        // 정렬
+        indices.sort((a, b) => a - b);
     }
 
-    const ranges: Array<MatchRange[] | undefined> = new Array(mergedClusters.length);
+    if (indices.length === 0) return [];
 
-    for (let pi = 0; pi < mergedClusters.length; pi++) {
-        const clusters = mergedClusters[pi];
-        if (!clusters || clusters.length === 0) {
-            ranges[pi] = undefined;
-            continue;
+    // dedup + range 변환 동시에
+    const ranges: MatchRange[] = [];
+    const charIndexes = target.charIndexes;
+    const inputLength = target.input.length;
+
+    let rangeStart = indices[0];
+    let prev = indices[0];
+
+    for (let i = 1; i < indices.length; i++) {
+        if (indices[i] === prev) continue; // dedup 스킵
+
+        if (indices[i] !== prev + 1) {
+            // 불연속 → range 저장
+            ranges.push({
+                start: charIndexes[rangeStart],
+                end: charIndexes[prev + 1] ?? inputLength,
+            });
+            rangeStart = indices[i];
         }
-
-        // 1) cluster 정렬 + dedup
-        clusters.sort((a, b) => a - b);
-
-        const uniqClusters: number[] = [];
-        let prev = -1;
-        for (const c of clusters) {
-            if (c !== prev) {
-                uniqClusters.push(c);
-                prev = c;
-            }
-        }
-
-        if (uniqClusters.length === 0) {
-            ranges[pi] = undefined;
-            continue;
-        }
-
-        // 2) cluster → char index
-        const charToCluster = parts[pi].clusterIndexes;
-        const charIndexes: number[] = [];
-
-        for (let ci = 0; ci < charToCluster.length; ci++) {
-            if (uniqClusters.includes(charToCluster[ci])) {
-                charIndexes.push(ci);
-            }
-        }
-
-        if (charIndexes.length === 0) {
-            ranges[pi] = undefined;
-            continue;
-        }
-
-        // 3) char index → range
-        charIndexes.sort((a, b) => a - b);
-        ranges[pi] = compressMatchIndexes(charIndexes);
+        prev = indices[i];
     }
+
+    // 마지막 range
+    ranges.push({
+        start: charIndexes[rangeStart],
+        end: charIndexes[prev + 1] ?? inputLength,
+    });
 
     return ranges;
 }

@@ -1,3 +1,5 @@
+import { Atoms } from "../types";
+
 // ㅘ → ㅗㅏ 식의 중성 분해
 const VOWEL_SPLIT_MAP: Record<string, string> = {
     ㅘ: "ㅗㅏ",
@@ -125,9 +127,9 @@ export function isVowel(ch: string): boolean {
 const internMap = new Map<string, string[]>();
 
 //
-// Main: 문자 하나 → stroke sequence
+// Main: 문자 하나 → atom sequence
 //
-export function decomposeToStrokes(ch: string): readonly string[] {
+export function decomposeToAtoms(ch: string): Atoms {
     const cached = internMap.get(ch);
     if (cached) return cached;
 

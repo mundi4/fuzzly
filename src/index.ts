@@ -1,19 +1,17 @@
 // Types
 export type {
-    FuzzyQuery,
-    FuzzyChar,
-    FuzzyStrokes,
-    StrokeMatchMap,
+    Query,
+    QueryGrapheme,
+    Target,
     MatchRange
 } from "./types";
 
 // Core builders
-export { buildFuzzyQuery } from "./buildFuzzyQuery";
-export { extractStrokes } from "./extractStrokes";
+export { buildQuery } from "./buildQuery";
+export { preprocessTarget } from "./preprocessTarget";
 
 // Matching
-export { matchLiteral } from "./matchLiteral";
-export { matchFuzzyStrokes } from "./matchFuzzyStrokes";
+export { match } from "./match";
 
 // Post-processing
 export { buildMatchRanges } from "./buildMatchRanges";
