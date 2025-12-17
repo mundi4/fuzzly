@@ -145,7 +145,9 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
                     // 남은 atom 허용
                 } else if (matchOptions.remainder === "tailSpilloverOnly") {
                     // tailSpillover가 활성화된 경우만 허용
-                    if (!matchOptions.tailSpillover) {
+                    const allowTailSpillover = matchOptions.tailSpillover === "always" ||
+                        (matchOptions.tailSpillover === "lastOnly" && qi === queryGraphemes.length - 1);
+                    if (!allowTailSpillover) {
                         qai = 0;
                         tgi++;
                         continue TARGET_CHAR_LOOP;
