@@ -1,4 +1,4 @@
-import { Atoms } from "../types";
+import { type Atoms } from "../types";
 
 // ㅘ → ㅗㅏ 식의 중성 분해
 const VOWEL_SPLIT_MAP: Record<string, string> = {
