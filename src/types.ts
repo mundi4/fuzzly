@@ -40,14 +40,14 @@ export type TargetOptions = {
 
 export type MatchOptions = {
     whitespace: "ignore" | "literal" | "normalize";
-    caseSensitive?: boolean;
-    tailSpillover?: boolean;
+    caseSensitive: boolean;
+    tailSpillover: "never" | "always" | "lastOnly";
     remainder: "strict" | "allow" | "tailSpilloverOnly";
 }
 
 export const DEFAULT_MATCH_OPTIONS: MatchOptions = {
     whitespace: "ignore",
     caseSensitive: true,
-    tailSpillover: false,
-    remainder: "strict",
+    tailSpillover: "lastOnly",
+    remainder: "tailSpilloverOnly",
 };

@@ -30,6 +30,14 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
     const queryGraphemes = query.graphemes;
     const tGraphemes = target.graphemes;
 
+    if (queryGraphemes.length === 0) {
+        return [];
+    }
+
+    if (queryGraphemes.length > tGraphemes.length) {
+        return null;
+    }
+
     let qi = 0; // query graphemes index
     let qai = 0; // query grapheme atoms index
     let tgi = 0; // target graphemes index
@@ -100,18 +108,25 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
                         matches.push(tgi);
                         tgi++;
                         continue TARGET_CHAR_LOOP;
-                    } else if (qGrapheme.tailIndex === -1 || qai < qGrapheme.tailIndex || !matchOptions.tailSpillover) {
-                        // query의 atom이 모음인 경우 이 글자 실패
-                        // tailSpillover가 false인 경우에도 이 글자 실패
+                    } else if (qGrapheme.tailIndex === -1 || qai < qGrapheme.tailIndex) {
+                        // 받침이 시작되지 않은 경우 => 즉, 모음인 경우
                         qai = 0;
                         tgi++;
                         continue TARGET_CHAR_LOOP;
+                        // } else if (qGrapheme.tailIndex === -1 || qai < qGrapheme.tailIndex || !matchOptions.tailSpillover) {
+                        //     // query의 atom이 모음인 경우 이 글자 실패
+                        //     // tailSpillover가 false인 경우에도 이 글자 실패
+                        //     qai = 0;
+                        //     tgi++;
+                        //     continue TARGET_CHAR_LOOP;
                     } else {
-                        // 종성에서 실패한 경우 spillover 허용
-                        // qai 유지하고 다음 타겟 글자로 넘어감
-                        matches.push(tgi);
-                        tgi++;
-                        continue TARGET_CHAR_LOOP;
+                        const allowTailSpillover = matchOptions.tailSpillover === "always" ||
+                            (matchOptions.tailSpillover === "lastOnly" && qi === queryGraphemes.length - 1);
+                        if (allowTailSpillover) {
+                            matches.push(tgi);
+                            tgi++;
+                            continue TARGET_CHAR_LOOP;
+                        }
                     }
                 }
             }
