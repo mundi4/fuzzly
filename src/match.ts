@@ -120,10 +120,16 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
                         //     tgi++;
                         //     continue TARGET_CHAR_LOOP;
                     } else {
+                        // 종성인 경우
                         const allowTailSpillover = matchOptions.tailSpillover === "always" ||
                             (matchOptions.tailSpillover === "lastOnly" && qi === queryGraphemes.length - 1);
                         if (allowTailSpillover) {
                             matches.push(tgi);
+                            tgi++;
+                            continue TARGET_CHAR_LOOP;
+                        } else {
+                            // spillover가 허용되지 않으므로 이 타겟 글자는 매칭 실패
+                            qai = 0;
                             tgi++;
                             continue TARGET_CHAR_LOOP;
                         }
