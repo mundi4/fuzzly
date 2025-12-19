@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "커맨트팔레트 용 그냥대충 애매하게 한글 매칭",
-  "main": "index.js",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "build": "tsup src/index.ts --dts --format esm,cjs",
     "test": "vitest run",
