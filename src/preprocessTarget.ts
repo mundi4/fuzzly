@@ -1,4 +1,4 @@
-import type { Target, TargetOptions } from "./types";
+import type { Atoms, Target, TargetOptions } from "./types";
 import { decomposeToAtoms } from "./internal/utils";
 import segmenter from "./internal/segmenter";
 
@@ -7,7 +7,7 @@ const DEFAULT_OPTIONS: TargetOptions = {
 };
 
 export function preprocessTarget(input: string, options: TargetOptions = DEFAULT_OPTIONS): Target {
-    const graphemes: Array<readonly string[]> = [];
+    const graphemes: Array<Atoms> = [];
     const graphemeIndexes: number[] = [];
     const charIndexes: number[] = [];
 
@@ -26,7 +26,7 @@ export function preprocessTarget(input: string, options: TargetOptions = DEFAULT
             graphemes.push(arr);
             graphemeIndexes[startIndex] = graphemeIndex;
         } else {
-            graphemes.push([cluster]);
+            graphemes.push(cluster);
             for (let i = 0; i < cluster.length; i++) {
                 graphemeIndexes[startIndex + i] = graphemeIndex;
             }

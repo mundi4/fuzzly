@@ -205,10 +205,10 @@ describe("buildQuery - 유닛 테스트", () => {
             expect(query.graphemes[0]).toHaveProperty("allowTailSpillover");
         });
 
-        it("atoms는 배열", () => {
+        it("atoms는 문자열", () => {
             const query = buildQuery("안");
-            expect(Array.isArray(query.graphemes[0].atoms)).toBe(true);
-            expect(query.graphemes[0].atoms.length).toBeGreaterThan(0);
+            expect(typeof query.graphemes[0].atoms).toBe("string");
+            expect(query.graphemes[0].atoms.length).toBe(3);
         });
     });
 

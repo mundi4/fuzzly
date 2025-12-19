@@ -1,5 +1,5 @@
 
-export type Atoms = readonly string[];
+export type Atoms = string;
 
 export type GraphemeIndices = number[];
 

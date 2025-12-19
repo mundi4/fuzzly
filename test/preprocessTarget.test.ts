@@ -162,16 +162,17 @@ describe("preprocessTarget - 유닛 테스트", () => {
     });
 
     describe("Graphemes 구조", () => {
-        it("각 grapheme은 배열", () => {
+        it("각 grapheme은 문자열", () => {
             const target = preprocessTarget("한글", { caseSensitive: true });
             for (const grapheme of target.graphemes) {
-                expect(Array.isArray(grapheme)).toBe(true);
+                expect(typeof grapheme).toBe("string");
             }
         });
 
-        it("한글 grapheme은 atoms 배열", () => {
+        it("한글 grapheme은 문자열", () => {
             const target = preprocessTarget("한", { caseSensitive: true });
-            expect(target.graphemes[0].length).toBeGreaterThan(0);
+            expect(typeof target.graphemes[0]).toBe("string");
+            expect(target.graphemes[0].length).toBe(3);
         });
 
         it("영문/숫자 grapheme", () => {
@@ -267,8 +268,7 @@ describe("preprocessTarget - 유닛 테스트", () => {
         it("grapheme atoms는 readonly", () => {
             const target = preprocessTarget("한", { caseSensitive: true });
             const atoms = target.graphemes[0];
-            expect(Array.isArray(atoms)).toBe(true);
-            // readonly이므로 수정 불가 (컴파일 타임에만 확인 가능)
+            expect(typeof atoms).toBe("string");
         });
     });
 });

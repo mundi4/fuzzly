@@ -124,20 +124,21 @@ export function isVowel(ch: string): boolean {
 }
 
 // intern cache
-const internMap = new Map<string, string[]>();
+const atomsCache = new Map<string, Atoms>();
 
 //
 // Main: 문자 하나 → atom sequence
 //
 export function decomposeToAtoms(ch: string): Atoms {
-    const cached = internMap.get(ch);
+    const cached = atomsCache.get(ch);
     if (cached) return cached;
 
     const code = ch.charCodeAt(0);
-    const out: string[] = [];
+    let ret: string;
 
     // 1) 완성형 한글
     if (code >= 0xac00 && code <= 0xd7a3) {
+        const out: string[] = [];
         const base = code - 0xac00;
         const leadIndex = Math.floor(base / 588);
         const vowelIndex = Math.floor((base % 588) / 28);
@@ -154,6 +155,7 @@ export function decomposeToAtoms(ch: string): Atoms {
                 out.push(t);
             }
         }
+        ret = out.join("");
     }
 
     // 2) 자모(초/중/종 + 호환자모)
@@ -161,17 +163,19 @@ export function decomposeToAtoms(ch: string): Atoms {
         (code >= 0x1100 && code <= 0x11ff) ||
         (code >= 0x3130 && code <= 0x318f)
     ) {
+        const out: string[] = [];
         const norm = normalizeCharToCompat(ch);
         const mid = splitVowel(norm);
         const broken = splitTail(mid);
         for (const s of broken) out.push(s);
+        ret = out.join("");
     }
 
     // 3) 그 외
     else {
-        out.push(ch);
+        ret = ch;
     }
 
-    internMap.set(ch, out);
-    return out;
+    atomsCache.set(ch, ret);
+    return ret;
 }
