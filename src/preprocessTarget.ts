@@ -1,6 +1,6 @@
-import type { Atoms, Target, TargetOptions } from "./types";
-import { decomposeToAtoms } from "./internal/utils";
 import segmenter from "./internal/segmenter";
+import { decomposeToAtoms } from "./internal/utils";
+import type { Atoms, Target, TargetOptions } from "./types";
 
 const DEFAULT_OPTIONS: TargetOptions = {
     caseSensitive: false,

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildQuery, preprocessTarget, match, buildMatchRanges } from "../src/index";
+import { describe, expect, it } from "vitest";
+import { buildMatchRanges, buildQuery, match, preprocessTarget } from "../src/index";
 
 describe("통합 테스트", () => {
     describe("전체 흐름", () => {
@@ -140,7 +140,7 @@ describe("통합 테스트", () => {
                 tailSpillover: false,
             });
 
-            expect((strictResult !== null) || (allowResult !== null)).toBe(true);
+            expect(strictResult !== null || allowResult !== null).toBe(true);
         });
 
         it("tailSpillover 옵션 비교", () => {
@@ -158,7 +158,7 @@ describe("통합 테스트", () => {
                 tailSpillover: true,
             });
 
-            expect((noSpillover !== null) || (withSpillover !== null)).toBe(true);
+            expect(noSpillover !== null || withSpillover !== null).toBe(true);
         });
     });
 
@@ -212,7 +212,7 @@ describe("통합 테스트", () => {
 
         it("많은 매칭 지점", () => {
             const query = buildQuery("a")!;
-            const target = preprocessTarget("a".repeat(50) + "b" + "a".repeat(50), { caseSensitive: true });
+            const target = preprocessTarget(`${"a".repeat(50)}b${"a".repeat(50)}`, { caseSensitive: true });
             const result = match(query, target);
             if (Array.isArray(result)) {
                 expect(result.length).toBeGreaterThan(0);
@@ -252,40 +252,29 @@ describe("통합 테스트", () => {
 
     describe("실제 사용 케이스", () => {
         it("사용자 검색 - 한글 입력", () => {
-            const users = [
-                "안녕하세요",
-                "반갑습니다",
-                "안녕히가세요",
-                "반갑지않아요",
-            ];
+            const users = ["안녕하세요", "반갑습니다", "안녕히가세요", "반갑지않아요"];
 
             const query = buildQuery("반")!;
 
             const results = users
-                .map((user, idx) => ({
+                .map((user) => ({
                     user,
                     match: match(query, preprocessTarget(user, { caseSensitive: true })),
                 }))
-                .filter(r => r.match !== null);
+                .filter((r) => r.match !== null);
 
             expect(results.length).toBeGreaterThan(0);
         });
 
         it("파일명 검색", () => {
-            const files = [
-                "document.pdf",
-                "image.png",
-                "data.json",
-                "design.pdf",
-            ];
+            const files = ["document.pdf", "image.png", "data.json", "design.pdf"];
 
             const query = buildQuery("pdf", { caseSensitive: false })!;
 
-            const results = files
-                .filter(file => {
-                    const target = preprocessTarget(file, { caseSensitive: false });
-                    return match(query, target) !== null;
-                });
+            const results = files.filter((file) => {
+                const target = preprocessTarget(file, { caseSensitive: false });
+                return match(query, target) !== null;
+            });
 
             expect(results.length).toBeGreaterThan(0);
         });

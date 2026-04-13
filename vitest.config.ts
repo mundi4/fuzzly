@@ -7,7 +7,7 @@ export default defineConfig({
         setupFiles: [],
         include: ["test/**/*.test.ts"],
         typecheck: {
-            tsconfig: "./tsconfig.test.json"
-        }
-    }
+            tsconfig: "./tsconfig.test.json",
+        },
+    },
 });

@@ -9,12 +9,18 @@
   "scripts": {
     "build": "tsup src/index.ts --dts --format esm,cjs",
     "test": "vitest run",
-    "test:ui": "vitest"
+    "test:ui": "vitest",
+    "check": "biome check",
+    "check:fix": "biome check --write",
+    "format": "biome format --write",
+    "lint": "biome lint",
+    "ci": "biome ci"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@biomejs/biome": "2.4.11",
     "@types/node": "^25.0.2",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
