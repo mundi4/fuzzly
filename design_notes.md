@@ -192,6 +192,112 @@ searcher.search("안녕");                              // 토글 해제, fuzzy 
 
 ---
 
+## Case 3: `tailSpillover` 옵션
+
+### 현재 상태
+
+`src/types.ts`의 `MatchOptions.tailSpillover: "never" | "always" | "lastOnly"`. 기본값 `"lastOnly"`.
+
+- **`"never"`**: spillover 금지
+- **`"always"`**: 모든 쿼리 글자에서 spillover 허용
+- **`"lastOnly"`**: **마지막 쿼리 글자만** spillover 허용 (기본값, "마지막 글자는 mid-composition일 것이다"라는 가정)
+
+### lastOnly는 set-containment는 지키지만 의도-monotonic을 깬다
+
+#### Set-containment 증명 (형식)
+
+**Claim**: `R(q+c, lastOnly) ⊆ R(q, lastOnly)`.
+
+Proof sketch:
+- `q+c` 매치에서 `q[n-1]`은 internal 위치이므로 spillover 없이 매칭됨
+- `q` 매치에서 `q[n-1]`은 last 위치이므로 spillover 허용으로 매칭됨
+- Spillover 허용은 spillover 금지의 superset → `q+c`의 모든 `q[n-1]` 매치는 `q`에서도 성공
+- `q`는 `q[n-1]` 이후 grapheme이 없으므로 commitment가 후속 매칭을 방해할 수 없음
+- ∴ `T ∈ R(q+c) → T ∈ R(q)` — narrowing 성립
+
+기술적으로 set-containment는 보장된다.
+
+#### 실제 UX에서는 사용자 의도가 뒤집힌다
+
+사용자가 `가방사`를 찾고 싶어서 `갑사`를 타이핑한다. `갑`은 `가방`의 mid-composition이고, ㅂ은 `방`의 초성으로 spillover 돼야 한다.
+
+**step 1: 쿼리 `갑` (lastOnly)**
+- qi=0 last, spillover 허용
+- `가방사` 매치: 갑 spillover ㅂ → 방[0]=ㅂ match → 매치 [0, 1] ✓
+
+**step 2: 쿼리 `갑사` (lastOnly)**
+- qi=0 (갑) NOT last, spillover **불허**
+- 갑 vs 가: tail mismatch, spillover 안 됨 → 실패
+- 갑 vs 방: ㄱ≠ㅂ → 실패
+- 갑 vs 사: ㄱ≠ㅅ → 실패
+- **매치 실패**
+
+**사용자 체감**: "갑 쳤을 때 `가방사` 나왔는데, 그게 내가 찾던 거라서 `갑사`로 더 좁히려 했는데 사라짐."
+
+`가방사` ∈ R(`갑`) 이지만 `가방사` ∉ R(`갑사`). 기술적으론 narrowing이지만, 사용자가 **동일한 타겟을 염두에 두고 계속 타이핑**하는 intent를 위배함.
+
+### lastOnly의 근본 결함
+
+"last 글자만 mid-composition"이라는 전제가 부정확하다:
+
+- 사용자가 `갑사`를 쳤을 때, `갑`도 여전히 `가방`의 approximate 입력. 앞 글자라고 해서 retroactively "finalized"가 아님.
+- spillover는 "조합 중"이라는 일시적 상태가 아니라 **한글 음절 경계의 구조적 모호성**에서 오는 것
+- ㅂ이 앞 음절의 종성이냐 다음 음절의 초성이냐는 타이핑이 얼마나 더 진행되었는지와 **무관한** 구조적 특성
+- 사용자가 추가 키를 쳤다고 해서 앞 글자의 음절 경계 해석이 바뀌면 안 됨
+
+**lastOnly는 앞 글자의 spillover 해석을 post-hoc으로 뒤집는다.** 이는 우리가 reject한 `"..."` 감지나 imeSwap auto fallback과 **같은 family의 implicit reinterpretation**이다. Set-containment가 우연히 narrowing 방향이라 일반 감사 기준(step 3)은 빠져나가지만, 사용자 의도 모델 관점에선 동일한 문제.
+
+### 세 옵션 비교
+
+|  | 해석 stability | monotonic (set) | 사용자 의도 |
+|---|---|---|---|
+| `"never"` | ✓ 일관 | ✓ | 너무 엄격 (기본 spillover 유스케이스 놓침) |
+| **`"always"`** | **✓ 일관** | **✓** | **✓ 부합** |
+| `"lastOnly"` | ✗ step마다 재해석 | ✓ | ✗ 앞 글자 spillover 사라짐 |
+
+### 결론 — `"always"`가 정답
+
+- `"lastOnly"`는 under-baked 최적화. 제거 대상.
+- `"never"`는 monotonic이지만 기본 spillover 유스케이스를 놓쳐서 "엄격 검색" 이외 쓸 데 없음
+- `"always"`만이 철학·기술·사용자 의도 세 축 모두 부합
+
+### 정리 방향 — 두 경로
+
+**(A) 옵션 제거, 내부적으로 항상 spillover 허용**
+- 가장 단순
+- `remainder` 옵션도 연쇄 재검토:
+  - 현재 `"strict"` 분기는 `if (!matchOptions.tailSpillover)` boolean 체크로 spillover에 coupled (이전 boolean 시절 잔재)
+  - 현재 `"tailSpilloverOnly"`는 lastOnly 로직에 의존 — spillover 상시 on이면 `"allow"`와 동치 → 중복 → 제거
+  - 결과: `remainder: "strict" | "allow"` 두 옵션만 남음
+
+**(B) 옵션 유지, 기본값만 `"lastOnly"` → `"always"`**
+- 하위호환
+- `"lastOnly"`는 "use at your own risk"로 남음
+- 아래 strict-remainder 버그를 별도 수정 필요
+
+### 관련 버그 (report 받음, 현재 브랜치에서 미수정)
+
+`src/match.ts:149`의 `if (!matchOptions.tailSpillover)` 체크는 이전 boolean 시절 잔재로, 현재 string union 하에서 항상 `false`다. 즉 `remainder: "strict"`의 failure path가 죽은 코드.
+
+구체적 재현:
+
+```ts
+const q = buildQuery("가")!;
+const t = preprocessTarget("각", { caseSensitive: true });
+match(q, t, { remainder: "strict", tailSpillover: "never", caseSensitive: true });
+// 기대: null (strict, spillover off, leftover atom ㄱ 있음)
+// 실제: [0] (strict failure path가 죽어서 그냥 accept)
+```
+
+- (A) 채택 시: `remainder` 재설계로 **자연 해소**, 별도 fix 불필요.
+- (B) 채택 시: 조건을 `matchOptions.tailSpillover === "never"`로 수정.
+
+### 지금은 기록만
+
+이 분석은 Case 1 (literal) / Case 2 (imeSwap)와 함께 기록해두고, 실제 구현/제거 작업은 후속 결정 대기. `claude/review-api-design-W4nv1`에서 strict-remainder 버그를 **fix하지 않고** 넘어간다.
+
+---
+
 ## 일반화된 원칙 — Feature 감사 기준
 
 ```
@@ -228,12 +334,14 @@ fuzzly에 새 feature 제안이 들어오면 다음 순서로 심사:
 
 - **리터럴**: `"..."` 감지 제거. literal 모드는 explicit API 옵션으로만 유지.
 - **imeSwap**: auto fallback 거부. parallel union / explicit toggle 허용.
+- **`tailSpillover` 옵션** (Case 3): `"lastOnly"`가 의도-monotonic을 깨는 implicit reinterpretation. `"always"`로 환원 권장, 나아가 옵션 자체 제거.
 - **향후 오타 교정(typo correction)**: 보통 조건부 활성화 → 거부. parallel로 짜면 노이즈 심함 → 아마 거부.
 - **향후 동의어 확장** (한↔영 번역 매칭 등): parallel로 짜면 monotonic 유지되지만 스코프 의문.
 
 ### 이 원칙이 건드리지 않는 것들
 
-- `tailSpillover`, `remainder` 옵션: 매칭 알고리즘 내부의 단일 해석을 변조할 뿐 쿼리를 재해석하지 않음. 모두 OK.
+- `tailSpillover: "always"` / `"never"`: 매 step 동일 해석 → OK. (`"lastOnly"`만 문제 — Case 3 참조)
+- `remainder` 옵션: 결정 보류. Case 3의 tailSpillover 정리 방향에 따라 같이 재검토 필요 (현재 `"strict"` 분기가 spillover boolean 잔재에 coupled).
 - `caseSensitive`: 쿼리/타겟 생성 시점에 고정, 런타임 재해석 없음. OK.
 - `whitespace` (이미 API 개편에서 타입 제거): 해당 없음.
 
@@ -244,4 +352,8 @@ fuzzly에 새 feature 제안이 들어오면 다음 순서로 심사:
 1. **리터럴**: `"..."` 감지 제거 + explicit `mode` 옵션으로 유지 vs 완전 제거
 2. **API 형태**: `search(q, { mode })` 확정 여부
 3. **imeSwap**: 구현 안 함 / parallel union opt-in / explicit mode toggle 중 택일
-4. **원칙 문서화**: `CLAUDE.md`에 "Implicit modality 금지" 섹션을 정식 추가할지
+4. **`tailSpillover`** (Case 3):
+   - (A) 옵션 제거하고 내부적으로 `"always"` 고정 + `remainder` 연쇄 재설계 (`"tailSpilloverOnly"` 제거)
+   - (B) 기본값만 `"always"`로 변경 + `src/match.ts:149` 버그 (`!matchOptions.tailSpillover` → `=== "never"`) 별도 수정
+   - 관련 버그: `remainder: "strict"`가 현재 죽은 코드임. (A) 선택 시 자연 해소, (B) 선택 시 별도 수정 필요.
+5. **원칙 문서화**: `CLAUDE.md`에 "Implicit modality 금지" 섹션을 정식 추가할지
