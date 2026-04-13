@@ -80,9 +80,8 @@ describe("통합 테스트", () => {
             const query = buildQuery("안", { caseSensitive: false })!;
             const target = preprocessTarget("안녕하세요", { caseSensitive: false });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "allow",
-                tailSpillover: true,
+                tailSpillover: "always",
                 caseSensitive: false,
             });
             expect(result).not.toBeNull();
@@ -93,14 +92,22 @@ describe("통합 테스트", () => {
         it("쿼리 대소문자 구분 + 타겟 대소문자 구분", () => {
             const query = buildQuery("ABC", { caseSensitive: true })!;
             const target = preprocessTarget("ABC", { caseSensitive: true });
-            const result = match(query, target, { whitespace: "ignore", remainder: "strict", caseSensitive: true });
+            const result = match(query, target, {
+                remainder: "strict",
+                tailSpillover: "lastOnly",
+                caseSensitive: true,
+            });
             expect(result).not.toBeNull();
         });
 
         it("쿼리 대소문자 무시 + 타겟 대소문자 무시", () => {
             const query = buildQuery("ABC", { caseSensitive: false })!;
             const target = preprocessTarget("abc", { caseSensitive: false });
-            const result = match(query, target, { whitespace: "ignore", remainder: "strict", caseSensitive: false });
+            const result = match(query, target, {
+                remainder: "strict",
+                tailSpillover: "lastOnly",
+                caseSensitive: false,
+            });
             expect(result).not.toBeNull();
         });
 
@@ -117,9 +124,8 @@ describe("통합 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 caseSensitive: true,
-                tailSpillover: false,
+                tailSpillover: "never",
                 remainder: "strict",
             });
             expect(result === null || Array.isArray(result)).toBe(true);
@@ -130,14 +136,14 @@ describe("통합 테스트", () => {
             const target = preprocessTarget("안녕", { caseSensitive: true });
 
             const strictResult = match(query, target, {
-                whitespace: "ignore",
+                caseSensitive: true,
                 remainder: "strict",
-                tailSpillover: false,
+                tailSpillover: "never",
             });
             const allowResult = match(query, target, {
-                whitespace: "ignore",
+                caseSensitive: true,
                 remainder: "allow",
-                tailSpillover: false,
+                tailSpillover: "never",
             });
 
             expect(strictResult !== null || allowResult !== null).toBe(true);
@@ -148,14 +154,14 @@ describe("통합 테스트", () => {
             const target = preprocessTarget("안녕", { caseSensitive: true });
 
             const noSpillover = match(query, target, {
-                whitespace: "ignore",
+                caseSensitive: true,
                 remainder: "strict",
-                tailSpillover: false,
+                tailSpillover: "never",
             });
             const withSpillover = match(query, target, {
-                whitespace: "ignore",
+                caseSensitive: true,
                 remainder: "strict",
-                tailSpillover: true,
+                tailSpillover: "always",
             });
 
             expect(noSpillover !== null || withSpillover !== null).toBe(true);

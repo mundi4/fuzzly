@@ -98,50 +98,11 @@ describe("match - 유닛 테스트", () => {
         });
     });
 
-    describe("MatchOptions - whitespace", () => {
-        it("기본값 ignore", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안 녕", { caseSensitive: true });
-            const result = match(query, target, {
-                whitespace: "ignore",
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("whitespace literal", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안 녕", { caseSensitive: true });
-            const result = match(query, target, {
-                whitespace: "literal",
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("whitespace normalize", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안  녕", { caseSensitive: true });
-            const result = match(query, target, {
-                whitespace: "normalize",
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-    });
-
     describe("MatchOptions - tailSpillover", () => {
         it("tailSpillover never", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -153,7 +114,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -165,7 +125,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "lastOnly",
                 caseSensitive: true,
@@ -177,7 +136,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -189,7 +147,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -201,13 +158,11 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("감")!; // 종성: ㅁ
             const target = preprocessTarget("감사", { caseSensitive: true }); // ㅁ이 ㅅ의 초성과 연결
             const resultNever = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
             });
             const resultAlways = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -220,7 +175,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("감사")!;
             const target = preprocessTarget("감사합니다", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -232,7 +186,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "strict",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -244,7 +197,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "allow",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -256,7 +208,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -268,7 +219,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "strict",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -280,7 +230,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "allow",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -292,7 +241,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -304,7 +252,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안녕")!;
             const target = preprocessTarget("안녕하세요", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "strict",
                 tailSpillover: "lastOnly",
                 caseSensitive: true,
@@ -316,7 +263,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안녕")!;
             const target = preprocessTarget("안녕하세요", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "allow",
                 tailSpillover: "lastOnly",
                 caseSensitive: true,
@@ -328,7 +274,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값고", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -340,13 +285,11 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("가")!;
             const target = preprocessTarget("가나", { caseSensitive: true });
             const resultNever = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
             });
             const resultAlways = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -359,7 +302,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("각각")!;
             const target = preprocessTarget("각각각", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -371,7 +313,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("감")!;
             const target = preprocessTarget("감시", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -379,11 +320,10 @@ describe("match - 유닛 테스트", () => {
             expect(result === null || Array.isArray(result)).toBe(true);
         });
 
-        it("tailSpillover와 whitespace 조합 - always", () => {
+        it("tailSpillover always - 공백 포함 타겟", () => {
             const query = buildQuery("감")!;
             const target = preprocessTarget("감 사", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -395,7 +335,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("감사합")!;
             const target = preprocessTarget("감사합니다", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -407,13 +346,11 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery('"감"')!;
             const target = preprocessTarget("감사", { caseSensitive: true });
             const resultNever = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
             });
             const resultAlways = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "always",
                 caseSensitive: true,
@@ -427,7 +364,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "strict",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -439,7 +375,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "allow",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -451,7 +386,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "never",
                 caseSensitive: true,
@@ -465,7 +399,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("ABC", { caseSensitive: true });
             const target = preprocessTarget("ABC", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "lastOnly",
                 caseSensitive: true,
@@ -477,7 +410,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("ABC")!;
             const target = preprocessTarget("abc", { caseSensitive: false });
             const result = match(query, target, {
-                whitespace: "ignore",
                 remainder: "tailSpilloverOnly",
                 tailSpillover: "lastOnly",
                 caseSensitive: false,
@@ -620,7 +552,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("절차")!;
             const target = preprocessTarget("개정 관련 참고", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 caseSensitive: true,
                 tailSpillover: "lastOnly",
                 remainder: "tailSpilloverOnly",
@@ -634,7 +565,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("절차")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 caseSensitive: true,
                 tailSpillover: "lastOnly",
                 remainder: "tailSpilloverOnly",
@@ -648,7 +578,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("절")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 caseSensitive: true,
                 tailSpillover: "lastOnly",
                 remainder: "tailSpilloverOnly",
@@ -662,7 +591,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("개정절차")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 caseSensitive: true,
                 tailSpillover: "lastOnly",
                 remainder: "tailSpilloverOnly",
@@ -675,7 +603,6 @@ describe("match - 유닛 테스트", () => {
             const query = buildQuery("관련참고")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
             const result = match(query, target, {
-                whitespace: "ignore",
                 caseSensitive: true,
                 tailSpillover: "lastOnly",
                 remainder: "tailSpilloverOnly",

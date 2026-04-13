@@ -34,19 +34,17 @@ export type QueryOptions = {
 };
 
 export type TargetOptions = {
-    caseSensitive: boolean;
+    caseSensitive?: boolean;
 };
 
 export type MatchOptions = {
-    whitespace: "ignore" | "literal" | "normalize";
     caseSensitive: boolean;
     tailSpillover: "never" | "always" | "lastOnly";
     remainder: "strict" | "allow" | "tailSpilloverOnly";
 };
 
 export const DEFAULT_MATCH_OPTIONS: MatchOptions = {
-    whitespace: "ignore",
-    caseSensitive: true,
+    caseSensitive: false,
     tailSpillover: "lastOnly",
     remainder: "tailSpilloverOnly",
 };
