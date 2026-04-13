@@ -67,12 +67,6 @@ describe("createSearcher", () => {
         expect(r3).toHaveLength(2);
     });
 
-    it("tailSpillover 옵션 전파", () => {
-        const searcher = createSearcher(["감사합니다"], { tailSpillover: "always" });
-        const results = searcher.search("감사");
-        expect(results).toHaveLength(1);
-    });
-
     it("리터럴 쿼리 (따옴표) 전파", () => {
         const searcher = createSearcher(["안녕하세요", "안녕히가세요"]);
         const results = searcher.search('"하세"');

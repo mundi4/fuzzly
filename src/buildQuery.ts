@@ -1,5 +1,5 @@
 import segmenter from "./internal/segmenter";
-import { decomposeToAtoms, isVowel } from "./internal/utils";
+import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
 import type { Query, QueryGrapheme, QueryOptions } from "./types";
 
 const DEFAULT_OPTIONS: QueryOptions = {
@@ -12,7 +12,6 @@ export function buildQuery(input: string, options: QueryOptions = DEFAULT_OPTION
     // literal 조건: 앞뒤 모두 " 로 감싸져 있는 경우만
     const isLiteral = input.length >= 2 && input.startsWith('"') && input.endsWith('"');
 
-    // Literal 처리
     if (isLiteral) {
         const inner = input.slice(1, -1);
         return {
@@ -26,14 +25,13 @@ export function buildQuery(input: string, options: QueryOptions = DEFAULT_OPTION
     // 이건 고민을 좀 해봐야함. '"'를 검색을 하고 싶을 수도 있다.
     let cleaned = input.replace(/"/g, "");
 
-    // caseSensitive 옵션 적용
     if (!options.caseSensitive) {
         cleaned = cleaned.toLowerCase();
     }
 
     if (cleaned === "") {
         return {
-            input: input,
+            input,
             graphemes: [],
             literal: null,
         };
@@ -41,35 +39,16 @@ export function buildQuery(input: string, options: QueryOptions = DEFAULT_OPTION
 
     const graphemes: QueryGrapheme[] = [];
 
-    // grapheme 단위로 이동
     for (const seg of segmenter.segment(cleaned)) {
         const rawGrapheme = seg.segment;
         const atoms = decomposeToAtoms(rawGrapheme);
-
-        // vowelIndex, tailIndex 계산
-        let vowelIndex = -1;
-        let tailIndex = -1;
-
-        for (let i = 0; i < atoms.length; i++) {
-            const s = atoms[i];
-            const v = isVowel(s);
-
-            if (vowelIndex === -1) {
-                if (v) vowelIndex = i;
-            } else {
-                if (!v) {
-                    tailIndex = i;
-                    break;
-                }
-            }
-        }
+        const { vowelIndex, tailIndex } = computeAtomRoles(atoms);
 
         graphemes.push({
             char: rawGrapheme,
             atoms,
             vowelIndex,
             tailIndex,
-            allowTailSpillover: false,
         });
     }
 

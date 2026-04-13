@@ -243,6 +243,25 @@ export function isVowel(ch: string): boolean {
     return VOWEL_SET[ch] === true;
 }
 
+// atoms 문자열에서 중성/종성 시작 인덱스 계산.
+// 한글이 아닌 원자(ASCII, emoji 등)는 모음이 없으므로 두 값 모두 -1.
+export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex: number } {
+    let vowelIndex = -1;
+    let tailIndex = -1;
+    for (let i = 0; i < atoms.length; i++) {
+        const v = VOWEL_SET[atoms[i]] === true;
+        if (vowelIndex === -1) {
+            if (v) vowelIndex = i;
+        } else {
+            if (!v) {
+                tailIndex = i;
+                break;
+            }
+        }
+    }
+    return { vowelIndex, tailIndex };
+}
+
 // intern cache
 const atomsCache = new Map<string, Atoms>();
 

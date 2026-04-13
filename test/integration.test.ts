@@ -75,39 +75,20 @@ describe("통합 테스트", () => {
             expect(fuzzyResult).not.toBeNull();
             expect(literalResult).not.toBeNull();
         });
-
-        it("여러 옵션 조합", () => {
-            const query = buildQuery("안", { caseSensitive: false })!;
-            const target = preprocessTarget("안녕하세요", { caseSensitive: false });
-            const result = match(query, target, {
-                remainder: "allow",
-                tailSpillover: "always",
-                caseSensitive: false,
-            });
-            expect(result).not.toBeNull();
-        });
     });
 
     describe("대소문자 조합", () => {
         it("쿼리 대소문자 구분 + 타겟 대소문자 구분", () => {
             const query = buildQuery("ABC", { caseSensitive: true })!;
             const target = preprocessTarget("ABC", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "strict",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
+            const result = match(query, target, { caseSensitive: true });
             expect(result).not.toBeNull();
         });
 
         it("쿼리 대소문자 무시 + 타겟 대소문자 무시", () => {
             const query = buildQuery("ABC", { caseSensitive: false })!;
             const target = preprocessTarget("abc", { caseSensitive: false });
-            const result = match(query, target, {
-                remainder: "strict",
-                tailSpillover: "lastOnly",
-                caseSensitive: false,
-            });
+            const result = match(query, target, { caseSensitive: false });
             expect(result).not.toBeNull();
         });
 
@@ -116,55 +97,6 @@ describe("통합 테스트", () => {
             const target = preprocessTarget("abc", { caseSensitive: false });
             const result = match(query, target);
             expect(result).not.toBeNull();
-        });
-    });
-
-    describe("MatchOptions 조합", () => {
-        it("모든 옵션을 지정", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕하세요", { caseSensitive: true });
-            const result = match(query, target, {
-                caseSensitive: true,
-                tailSpillover: "never",
-                remainder: "strict",
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("remainder 옵션 비교", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-
-            const strictResult = match(query, target, {
-                caseSensitive: true,
-                remainder: "strict",
-                tailSpillover: "never",
-            });
-            const allowResult = match(query, target, {
-                caseSensitive: true,
-                remainder: "allow",
-                tailSpillover: "never",
-            });
-
-            expect(strictResult !== null || allowResult !== null).toBe(true);
-        });
-
-        it("tailSpillover 옵션 비교", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-
-            const noSpillover = match(query, target, {
-                caseSensitive: true,
-                remainder: "strict",
-                tailSpillover: "never",
-            });
-            const withSpillover = match(query, target, {
-                caseSensitive: true,
-                remainder: "strict",
-                tailSpillover: "always",
-            });
-
-            expect(noSpillover !== null || withSpillover !== null).toBe(true);
         });
     });
 

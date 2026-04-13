@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildQuery, match, preprocessTarget } from "../src/index";
+import { journeyFrom } from "./ime";
 
 describe("match - 유닛 테스트", () => {
     describe("기본 매칭", () => {
@@ -9,13 +10,6 @@ describe("match - 유닛 테스트", () => {
             const result = match(query, target);
             expect(result).not.toBeNull();
             expect(Array.isArray(result)).toBe(true);
-        });
-
-        it("한글 여러 개 매칭", () => {
-            const query = buildQuery("안녕")!;
-            const target = preprocessTarget("안녕하세요", { caseSensitive: true });
-            const result = match(query, target);
-            expect(result).not.toBeNull();
         });
 
         it("매칭 없음", () => {
@@ -98,299 +92,48 @@ describe("match - 유닛 테스트", () => {
         });
     });
 
-    describe("MatchOptions - tailSpillover", () => {
-        it("tailSpillover never", () => {
+    describe("종성 / 겹받침 / 음절 경계", () => {
+        it("종성 있는 글자는 혼자서도 매치", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
+            expect(match(query, target)).not.toBeNull();
         });
 
-        it("tailSpillover always", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover lastOnly (기본값)", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("종성 있는 글자 - tailSpillover never", () => {
+        it("겹받침 글자 exact match", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
+            expect(match(query, target)).not.toBeNull();
         });
 
-        it("종성 있는 글자 - tailSpillover always", () => {
-            const query = buildQuery("값")!;
-            const target = preprocessTarget("값", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
+        it("종성이 다음 글자 초성으로 넘어가는 케이스 (감 → 감사)", () => {
+            const query = buildQuery("감")!;
+            const target = preprocessTarget("감사", { caseSensitive: true });
+            // 감이 온전히 감사의 첫 음절에 매치
+            expect(match(query, target)).not.toBeNull();
         });
 
-        it("종성이 다음 글자로 spillover될 수 있는 경우 - never vs always", () => {
-            const query = buildQuery("감")!; // 종성: ㅁ
-            const target = preprocessTarget("감사", { caseSensitive: true }); // ㅁ이 ㅅ의 초성과 연결
-            const resultNever = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            const resultAlways = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(resultNever === null || Array.isArray(resultNever)).toBe(true);
-            expect(resultAlways === null || Array.isArray(resultAlways)).toBe(true);
-        });
-
-        it("여러 글자 - tailSpillover never", () => {
-            const query = buildQuery("감사")!;
-            const target = preprocessTarget("감사합니다", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover never with remainder strict", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "strict",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("tailSpillover never with remainder allow", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "allow",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover never with remainder tailSpilloverOnly", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("tailSpillover always with remainder strict", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "strict",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover always with remainder allow", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "allow",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover always with remainder tailSpilloverOnly", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover lastOnly with remainder strict", () => {
-            const query = buildQuery("안녕")!;
-            const target = preprocessTarget("안녕하세요", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "strict",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("tailSpillover lastOnly with remainder allow", () => {
-            const query = buildQuery("안녕")!;
-            const target = preprocessTarget("안녕하세요", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "allow",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("복합 종성 (겹받침) spillover - always", () => {
+        it("겹받침 → 이후 음절로 자연스럽게 소비 (값 → 값고)", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값고", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
+            expect(match(query, target)).not.toBeNull();
         });
 
-        it("종성 없는 글자와 tailSpillover", () => {
+        it("종성 없는 글자도 그대로 매치 (가 → 가나)", () => {
             const query = buildQuery("가")!;
             const target = preprocessTarget("가나", { caseSensitive: true });
-            const resultNever = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            const resultAlways = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(resultNever).not.toBeNull();
-            expect(resultAlways).not.toBeNull();
+            expect(match(query, target)).not.toBeNull();
         });
 
-        it("연속 종성 글자들의 spillover - always", () => {
+        it("연속 종성 글자 (각각 → 각각각)", () => {
             const query = buildQuery("각각")!;
             const target = preprocessTarget("각각각", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
+            expect(match(query, target)).not.toBeNull();
         });
 
-        it("특정 종성과 다음 초성의 호환성 - always", () => {
-            const query = buildQuery("감")!;
-            const target = preprocessTarget("감시", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("tailSpillover always - 공백 포함 타겟", () => {
-            const query = buildQuery("감")!;
-            const target = preprocessTarget("감 사", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("3글자 이상에서 tailSpillover always", () => {
+        it("3글자 이상 (감사합 → 감사합니다)", () => {
             const query = buildQuery("감사합")!;
             const target = preprocessTarget("감사합니다", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("리터럴 쿼리는 tailSpillover 영향 없음", () => {
-            const query = buildQuery('"감"')!;
-            const target = preprocessTarget("감사", { caseSensitive: true });
-            const resultNever = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            const resultAlways = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "always",
-                caseSensitive: true,
-            });
-            expect(resultNever).toEqual(resultAlways);
-        });
-    });
-
-    describe("MatchOptions - remainder", () => {
-        it("remainder strict", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "strict",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("remainder allow", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "allow",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
-        });
-
-        it("remainder tailSpilloverOnly", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "never",
-                caseSensitive: true,
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
+            expect(match(query, target)).not.toBeNull();
         });
     });
 
@@ -398,23 +141,13 @@ describe("match - 유닛 테스트", () => {
         it("caseSensitive true", () => {
             const query = buildQuery("ABC", { caseSensitive: true });
             const target = preprocessTarget("ABC", { caseSensitive: true });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "lastOnly",
-                caseSensitive: true,
-            });
-            expect(result).not.toBeNull();
+            expect(match(query, target, { caseSensitive: true })).not.toBeNull();
         });
 
         it("caseSensitive false", () => {
             const query = buildQuery("ABC")!;
             const target = preprocessTarget("abc", { caseSensitive: false });
-            const result = match(query, target, {
-                remainder: "tailSpilloverOnly",
-                tailSpillover: "lastOnly",
-                caseSensitive: false,
-            });
-            expect(result).not.toBeNull();
+            expect(match(query, target, { caseSensitive: false })).not.toBeNull();
         });
     });
 
@@ -439,13 +172,6 @@ describe("match - 유닛 테스트", () => {
             expect(result).not.toBeNull();
         });
 
-        it("매칭이 여러 번", () => {
-            const query = buildQuery("세")!;
-            const target = preprocessTarget("세계 세상 세탁", { caseSensitive: true });
-            const result = match(query, target);
-            expect(result).not.toBeNull();
-        });
-
         it("이모지 + 한글 혼합", () => {
             const query = buildQuery("녕")!;
             const target = preprocessTarget("안녕😊하세요", { caseSensitive: true });
@@ -462,24 +188,6 @@ describe("match - 유닛 테스트", () => {
     });
 
     describe("결과 검증", () => {
-        it("결과는 배열 또는 null", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target);
-            expect(result === null || Array.isArray(result)).toBe(true);
-        });
-
-        it("배열이면 숫자들만 포함", () => {
-            const query = buildQuery("안")!;
-            const target = preprocessTarget("안녕", { caseSensitive: true });
-            const result = match(query, target);
-            if (Array.isArray(result)) {
-                for (const idx of result) {
-                    expect(typeof idx).toBe("number");
-                }
-            }
-        });
-
         it("인덱스는 grapheme 범위 내", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요", { caseSensitive: true });
@@ -518,20 +226,6 @@ describe("match - 유닛 테스트", () => {
     });
 
     describe("복합 문자", () => {
-        it("종성이 있는 한글", () => {
-            const query = buildQuery("각")!;
-            const target = preprocessTarget("각", { caseSensitive: true });
-            const result = match(query, target);
-            expect(result).not.toBeNull();
-        });
-
-        it("겹받침", () => {
-            const query = buildQuery("값")!;
-            const target = preprocessTarget("값", { caseSensitive: true });
-            const result = match(query, target);
-            expect(result).not.toBeNull();
-        });
-
         it("이모지 + 스킨톤", () => {
             const query = buildQuery("👋🏻")!;
             const target = preprocessTarget("👋🏻", { caseSensitive: true });
@@ -548,28 +242,10 @@ describe("match - 유닛 테스트", () => {
     });
 
     describe("실제 사용 케이스", () => {
-        it("타겟: 개정 관련 참고, 쿼리: 절차 (tailSpillover: lastOnly)", () => {
-            const query = buildQuery("절차")!;
-            const target = preprocessTarget("개정 관련 참고", { caseSensitive: true });
-            const result = match(query, target, {
-                caseSensitive: true,
-                tailSpillover: "lastOnly",
-                remainder: "tailSpilloverOnly",
-            });
-            // "절"은 마지막이 아니므로 spillover 불가
-            // "절"의 종성 ㄹ이 spillover되지 않아야 하므로 null
-            expect(result).toBeNull();
-        });
-
         it("타겟: 개정 절차 관련 참고, 쿼리: 절차", () => {
             const query = buildQuery("절차")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
-            const result = match(query, target, {
-                caseSensitive: true,
-                tailSpillover: "lastOnly",
-                remainder: "tailSpilloverOnly",
-            });
-            // 절차가 있으므로 매칭됨
+            const result = match(query, target);
             expect(result).not.toBeNull();
             expect(Array.isArray(result)).toBe(true);
         });
@@ -577,37 +253,84 @@ describe("match - 유닛 테스트", () => {
         it("타겟: 개정 절차 관련 참고, 쿼리: 절 (부분 매칭)", () => {
             const query = buildQuery("절")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
-            const result = match(query, target, {
-                caseSensitive: true,
-                tailSpillover: "lastOnly",
-                remainder: "tailSpilloverOnly",
-            });
-            // 절이 있으므로 매칭됨
+            const result = match(query, target);
             expect(result).not.toBeNull();
             expect(Array.isArray(result)).toBe(true);
-        });
-
-        it("타겟: 개정 절차 관련 참고, 쿼리: 개정절차", () => {
-            const query = buildQuery("개정절차")!;
-            const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
-            const result = match(query, target, {
-                caseSensitive: true,
-                tailSpillover: "lastOnly",
-                remainder: "tailSpilloverOnly",
-            });
-            // 공백을 무시하고 개정절차가 있으므로 매칭 가능
-            expect(result === null || Array.isArray(result)).toBe(true);
         });
 
         it("타겟: 개정 절차 관련 참고, 쿼리: 관련참고", () => {
             const query = buildQuery("관련참고")!;
             const target = preprocessTarget("개정 절차 관련 참고", { caseSensitive: true });
-            const result = match(query, target, {
-                caseSensitive: true,
-                tailSpillover: "lastOnly",
-                remainder: "tailSpilloverOnly",
-            });
-            expect(result === null || Array.isArray(result)).toBe(true);
+            const result = match(query, target);
+            expect(result).not.toBeNull();
+        });
+    });
+
+    // "매치 테스트는 최종 쿼리만 볼 게 아니라 그 쿼리를 치는 과정의 모든 상태에서
+    // match 성공해야 한다" — monotonic narrowing 원칙의 직접 검증.
+    //
+    // 각 케이스는 최종 쿼리 문자열을 주면 IME 시뮬레이터(test/ime.ts)가 그 문자열을
+    // 만들어내기까지의 모든 중간 타이핑 상태를 풀어주고, 전부 같은 타겟에 매치되는지
+    // 확인한다.
+    describe("monotonic narrowing — 타이핑 journey 전체 검증", () => {
+        function assertJourneyMatches(targetStr: string, finalQueries: string[]) {
+            const target = preprocessTarget(targetStr, { caseSensitive: true });
+            for (const finalQuery of finalQueries) {
+                const journey = journeyFrom(finalQuery);
+                for (const state of journey) {
+                    const q = buildQuery(state)!;
+                    const result = match(q, target);
+                    expect(
+                        result,
+                        `target "${targetStr}" / final "${finalQuery}" / mid-state "${state}"`,
+                    ).not.toBeNull();
+                }
+            }
+        }
+
+        it("감사합니다 — 기본 journey", () => {
+            assertJourneyMatches("감사합니다", ["감사합니다"]);
+        });
+
+        it("전략기획부 — 초성 약식/겹받침 compound jamo/혼합", () => {
+            assertJourneyMatches("전략기획부", [
+                "ㅈㄺㅎㅂ", // 전 + 략기(ㄺ) + 획 + 부
+                "ㅈㄼ", // 전 + 략(ㄹ) + skip + 부(ㅂ)
+                "ㄺㅂ", // skip + 략기(ㄺ) + skip + 부
+                "ㄺㅎㅂ", // skip + 략기(ㄺ) + 획 + 부
+                "ㅈㄺㅎ", // 전 + 략기(ㄺ) + 획
+                "ㄺㅎ", // skip + 략기(ㄺ) + 획
+                "전략ㄱㅎㅂ", // 전략 완전 합성 + 기획부 초성 약식
+                "저략", // 저(ㅈㅓ)로 전의 앞 두 atom 소비 + 략 완전
+                "ㅈ랴깋ㅂ", // 전(ㅈ) + 략(랴) + 기획(깋; ㅎ이 획 초성으로 넘김) + 부
+            ]);
+        });
+
+        it("전략기획부 — 실패해야 하는 쿼리", () => {
+            const target = preprocessTarget("전략기획부", { caseSensitive: true });
+
+            // 쟈(ㅈㅑ)는 전(ㅈㅓ)의 prefix가 아니다. 초성만 맞지 vowel이 달라서
+            // anchor가 성립하지 않는다. 이후 음절에도 ㅈ-초성이 없으므로 전체 실패.
+            expect(match(buildQuery("쟈기획부")!, target)).toBeNull();
+
+            // ㄴ은 standalone 초성으로 해석. 타겟에 ㄴ-초성 음절 없음 (전의 종성 ㄴ은
+            // LEAD 자리가 아님).
+            expect(match(buildQuery("ㄴㄺㅎ")!, target)).toBeNull();
+        });
+
+        // issue #6 — 사용자는 앞 4글자를 완전 합성한 뒤 나머지는 초성만 약식으로
+        // 입력했다. "맂"은 리 + ㅈ(다음 초성)이 IME에서 ㅈ을 종성으로 붙여 만들어진
+        // 상태이며, 그 뒤에 추가로 찍히는 ㄹ/ㅎ/ㅇ/ㅎ는 더 이상 합성되지 않는다.
+        // 이 journey의 모든 중간 상태가 자산관리전략협의회에 매치돼야 한다.
+        // https://github.com/mundi4/fuzzly/issues/6
+        it("자산관리전략협의회 — 앞 4글자 완전 합성 + 초성 약식 (issue #6)", () => {
+            // 앞 4글자 풀 합성 + 나머지 5글자 초성만. IME가 ㅈ을 리의 종성으로 흡수해
+            // 맂을 만들고, 그 뒤 ㄹㅎ은 compound 겹자음 ㅀ로 합쳐진다 (test/ime.ts
+            // 시뮬레이터 기준).
+            assertJourneyMatches("자산관리전략협의회", ["자산관리ㅈㄹㅎㅇㅎ"]);
+
+            // 전체 타겟을 완전히 합성하는 경우도 당연히 모든 상태가 매치돼야 한다.
+            assertJourneyMatches("자산관리전략협의회", ["자산관리전략협의회"]);
         });
     });
 });

@@ -1,13 +1,13 @@
 import segmenter from "./internal/segmenter";
-import { decomposeToAtoms } from "./internal/utils";
-import type { Atoms, Target, TargetOptions } from "./types";
+import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
+import type { Target, TargetGrapheme, TargetOptions } from "./types";
 
 const DEFAULT_OPTIONS: TargetOptions = {
     caseSensitive: false,
 };
 
 export function preprocessTarget(input: string, options: TargetOptions = DEFAULT_OPTIONS): Target {
-    const graphemes: Array<Atoms> = [];
+    const graphemes: TargetGrapheme[] = [];
     const graphemeIndexes: number[] = [];
     const charIndexes: number[] = [];
 
@@ -18,19 +18,21 @@ export function preprocessTarget(input: string, options: TargetOptions = DEFAULT
         const cluster = seg.segment;
         const startIndex = seg.index;
 
-        // graphemeIndex -> utf16 start index
         charIndexes[graphemeIndex] = startIndex;
 
+        let atoms: string;
         if (cluster.length === 1) {
-            const arr = decomposeToAtoms(cluster);
-            graphemes.push(arr);
+            atoms = decomposeToAtoms(cluster);
             graphemeIndexes[startIndex] = graphemeIndex;
         } else {
-            graphemes.push(cluster);
+            atoms = cluster;
             for (let i = 0; i < cluster.length; i++) {
                 graphemeIndexes[startIndex + i] = graphemeIndex;
             }
         }
+
+        const { vowelIndex, tailIndex } = computeAtomRoles(atoms);
+        graphemes.push({ atoms, vowelIndex, tailIndex });
 
         graphemeIndex++;
     }

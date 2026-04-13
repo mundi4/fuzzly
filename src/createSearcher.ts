@@ -11,8 +11,6 @@ import type { MatchOptions, MatchRange, Target } from "./types";
  */
 export type SearcherOptions = {
     caseSensitive?: boolean;
-    tailSpillover?: MatchOptions["tailSpillover"];
-    remainder?: MatchOptions["remainder"];
 };
 
 export type SearchResult = {
@@ -46,11 +44,7 @@ export function createSearcher(items: readonly string[], options: SearcherOption
 
     const targets: Target[] = items.map((item) => preprocessTarget(item, { caseSensitive }));
 
-    const matchOptions: MatchOptions = {
-        caseSensitive,
-        tailSpillover: options.tailSpillover ?? "lastOnly",
-        remainder: options.remainder ?? "tailSpilloverOnly",
-    };
+    const matchOptions: MatchOptions = { caseSensitive };
 
     return {
         search(queryInput: string): SearchResult[] {

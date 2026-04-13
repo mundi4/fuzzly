@@ -162,23 +162,28 @@ describe("preprocessTarget - 유닛 테스트", () => {
     });
 
     describe("Graphemes 구조", () => {
-        it("각 grapheme은 문자열", () => {
+        it("각 grapheme은 atoms/vowelIndex/tailIndex를 가진다", () => {
             const target = preprocessTarget("한글", { caseSensitive: true });
             for (const grapheme of target.graphemes) {
-                expect(typeof grapheme).toBe("string");
+                expect(typeof grapheme.atoms).toBe("string");
+                expect(typeof grapheme.vowelIndex).toBe("number");
+                expect(typeof grapheme.tailIndex).toBe("number");
             }
         });
 
-        it("한글 grapheme은 문자열", () => {
+        it("한글 syllable은 vowel/tail 인덱스를 올바르게 계산", () => {
             const target = preprocessTarget("한", { caseSensitive: true });
-            expect(typeof target.graphemes[0]).toBe("string");
-            expect(target.graphemes[0].length).toBe(3);
+            // 한 = ㅎㅏㄴ → vowelIndex=1, tailIndex=2
+            expect(target.graphemes[0].atoms.length).toBe(3);
+            expect(target.graphemes[0].vowelIndex).toBe(1);
+            expect(target.graphemes[0].tailIndex).toBe(2);
         });
 
-        it("영문/숫자 grapheme", () => {
+        it("영문/숫자 grapheme은 vowelIndex = -1", () => {
             const target = preprocessTarget("a1", { caseSensitive: true });
-            expect(target.graphemes[0].length).toBeGreaterThan(0);
-            expect(target.graphemes[1].length).toBeGreaterThan(0);
+            expect(target.graphemes[0].atoms.length).toBeGreaterThan(0);
+            expect(target.graphemes[0].vowelIndex).toBe(-1);
+            expect(target.graphemes[1].vowelIndex).toBe(-1);
         });
     });
 
@@ -265,10 +270,9 @@ describe("preprocessTarget - 유닛 테스트", () => {
     });
 
     describe("Readonly 검증", () => {
-        it("grapheme atoms는 readonly", () => {
+        it("grapheme atoms는 문자열", () => {
             const target = preprocessTarget("한", { caseSensitive: true });
-            const atoms = target.graphemes[0];
-            expect(typeof atoms).toBe("string");
+            expect(typeof target.graphemes[0].atoms).toBe("string");
         });
     });
 });

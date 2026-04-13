@@ -202,7 +202,6 @@ describe("buildQuery - 유닛 테스트", () => {
             expect(query.graphemes[0]).toHaveProperty("atoms");
             expect(query.graphemes[0]).toHaveProperty("vowelIndex");
             expect(query.graphemes[0]).toHaveProperty("tailIndex");
-            expect(query.graphemes[0]).toHaveProperty("allowTailSpillover");
         });
 
         it("atoms는 문자열", () => {
