@@ -20,9 +20,10 @@ See `readme.md` (Korean) for the long-form design notes and rationale, and `test
 - **Runtime target:** `esnext`, `lib: ["ES2024", "ESNext.Intl"]` — depends on `Intl.Segmenter`
 - **Build:** [`tsup`](https://tsup.egoist.dev/) emitting both ESM and CJS with `.d.ts`
 - **Tests:** [`vitest`](https://vitest.dev/) with `globals: true`, Node environment, `test/**/*.test.ts`
+- **Lint + format:** [`@biomejs/biome`](https://biomejs.dev/) (pinned exact version via `-E`). Biome replaces ESLint + Prettier — do **not** reintroduce either.
 - **Package entry:** `./src/index.ts` (raw TS — consumers are expected to bundle, or use the `tsup` build output `dist/`)
 
-There is **no linter, formatter, or pre-commit hook** configured. Don't add one without being asked.
+There is no git pre-commit hook. Don't add one without being asked.
 
 ### Common commands
 
@@ -30,9 +31,31 @@ There is **no linter, formatter, or pre-commit hook** configured. Don't add one 
 npm test          # vitest run (one-shot)
 npm run test:ui   # vitest watch / UI mode
 npm run build     # tsup build into dist/ (esm + cjs + dts)
+
+npm run check     # biome check: format + lint + organize-imports (read-only)
+npm run check:fix # biome check --write: apply safe fixes
+npm run format    # biome format --write: formatting only
+npm run lint      # biome lint: lint only, read-only
+npm run ci        # biome ci: strict CI-mode check (no writes, non-zero on any issue)
 ```
 
-There is no separate `typecheck` script. `vitest` enables `typecheck` via `tsconfig.test.json`, and `tsup --dts` will also typecheck on build.
+There is no separate `typecheck` script. `vitest` enables `typecheck` via `tsconfig.test.json`, and `tsup --dts` will also typecheck on build. Biome does **not** typecheck — it only handles syntax, formatting, lint rules, and import organization.
+
+### Biome configuration (`biome.json`)
+
+- `$schema` is pinned to the installed Biome version (currently `2.4.11`). When bumping Biome, update both the package version (`-E`) and the schema URL, then run `npx biome migrate --write` to apply any config migrations.
+- Formatter: 4-space indent, `lineWidth: 120`, LF line endings, double quotes, always-semicolons, trailing-comma `"all"`.
+- Linter: `recommended` rule set on. No custom rules enabled beyond recommended.
+- Assist: `organizeImports` is on (imports get alphabetized/grouped on `check:fix`).
+- VCS integration is enabled — Biome honors `.gitignore`, so `dist/`, `node_modules/`, etc. are automatically excluded.
+- `files.includes` explicitly covers `src/**/*.ts`, `test/**/*.ts`, root-level `*.ts`, and `*.json` (except `package-lock.json`).
+- **Test override:** `noNonNullAssertion` is turned off for `test/**/*.ts`. Tests use `buildQuery("…")!` and `match(...)!` extensively, which is idiomatic for vitest specs. Keep this override.
+
+When you touch source or test files, run `npm run check:fix` before committing. Biome is fast (whole repo in ~35ms) so this is essentially free.
+
+### Known pre-existing typecheck errors
+
+`tsc -p tsconfig.test.json` currently reports several `tailSpillover` errors in `test/integration.test.ts` — they date from the refactor that changed `tailSpillover` from `boolean` to `"never" | "always" | "lastOnly"` and the test file was not updated. Vitest runs fine (it strips types via esbuild without typechecking) and all 197 tests pass. Do not "fix" these silently as scope creep; address them as a separate, explicit task.
 
 ### TypeScript project layout
 
@@ -65,6 +88,7 @@ test/
   integration.test.ts       End-to-end pipeline tests
   comprehensive.test.ts     Currently a placeholder
 
+biome.json                  Biome formatter + linter config
 readme.md                   Korean design notes — read these before changing match.ts
 test_analysis.md            Worked example explaining a tail-spillover edge case
 env.d.ts                    Declares optional FUZZLY_USE_SEGMENTER env var
@@ -181,7 +205,9 @@ Takes one or more hit arrays (sorted grapheme indices, one array per sub-query) 
 
 ## Conventions
 
-- **Imports inside `src/`** use relative paths and explicit extensions are not required (bundler resolution).
+- **Formatting and lint are Biome-enforced.** Don't hand-format; run `npm run check:fix` instead. Style decisions (quote style, semicolons, trailing commas, line width, import order, `import type`, etc.) are delegated to Biome — if you disagree, change `biome.json`, don't fight it in individual files.
+- **Imports inside `src/`** use relative paths and explicit extensions are not required (bundler resolution). Import order is sorted by Biome's `organizeImports` assist.
+- **Type-only imports** must use `import type { … }` — Biome's `useImportType` rule enforces this.
 - **`internal/`** is private — do not re-export anything from `internal/` through `src/index.ts`.
 - **All public types live in `src/types.ts`.** Don't define exported types ad hoc in feature files.
 - **No comments in non-Korean text are required** — existing code mixes Korean inline comments with English identifiers. When adding comments to existing files, match the surrounding language. New top-level docs (like this file) can be in English.
@@ -200,7 +226,7 @@ Takes one or more hit arrays (sorted grapheme indices, one array per sub-query) 
 - Default branch: `main`.
 - When working on behalf of Claude Code on the web, develop on the assigned feature branch and push there. Never push to `main` without explicit user approval.
 - Commit messages in this repo are short, lowercase-ish, present-tense, English (e.g. `fix tail spillover matching logic`, `change Atoms to string from readonly string[]`). Match that style.
-- There are no commit hooks. Don't add any.
+- There are no commit hooks. Don't add any. Run `npm run check` and `npm test` manually before committing.
 - Do **not** open pull requests automatically — only when the user explicitly asks.
 
 ## Things That Are Intentionally Not Done Yet
