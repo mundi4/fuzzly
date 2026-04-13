@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsup src/index.ts --dts --format esm,cjs",
+    "build": "tsup src/index.ts --dts --format esm,cjs,iife --global-name fuzzly",
     "test": "vitest run",
     "test:ui": "vitest",
     "check": "biome check",
