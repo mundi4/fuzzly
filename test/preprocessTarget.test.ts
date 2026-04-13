@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { preprocessTarget } from "../src/index";
 
 describe("preprocessTarget - 유닛 테스트", () => {
@@ -195,10 +195,10 @@ describe("preprocessTarget - 유닛 테스트", () => {
 
         it("다양한 공백 종류", () => {
             const variants = [
-                "안 녕",      // 일반 공백
-                "안\t녕",     // 탭
+                "안 녕", // 일반 공백
+                "안\t녕", // 탭
                 "안\u00A0녕", // 논-브레이킹 스페이스
-                "안\n녕",     // 줄바꿈
+                "안\n녕", // 줄바꿈
             ];
 
             for (const text of variants) {
@@ -228,7 +228,7 @@ describe("preprocessTarget - 유닛 테스트", () => {
         });
 
         it("혼합 긴 텍스트", () => {
-            const longText = ("안a1 ".repeat(100)).trim();
+            const longText = "안a1 ".repeat(100).trim();
             const target = preprocessTarget(longText, { caseSensitive: true });
             expect(target.graphemes.length).toBeGreaterThan(0);
         });

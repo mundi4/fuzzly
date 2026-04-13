@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildQuery, preprocessTarget, match, buildMatchRanges } from "../src/index";
+import { describe, expect, it } from "vitest";
+import { buildMatchRanges, buildQuery, match, preprocessTarget } from "../src/index";
 
 describe("buildMatchRanges - 유닛 테스트", () => {
     describe("기본 기능", () => {
@@ -140,7 +140,10 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("hitMap 병합", () => {
             const target = preprocessTarget("안녕하세요", { caseSensitive: true });
             // 여러 hitMap이 겹치는 경우
-            const hitMaps = [[0, 1], [1, 2]];
+            const hitMaps = [
+                [0, 1],
+                [1, 2],
+            ];
             const ranges = buildMatchRanges(hitMaps, target);
             expect(Array.isArray(ranges)).toBe(true);
         });
@@ -148,7 +151,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
 
     describe("성능", () => {
         it("매우 많은 매칭", () => {
-            const target = preprocessTarget("안" + "녕".repeat(100), { caseSensitive: true });
+            const target = preprocessTarget(`안${"녕".repeat(100)}`, { caseSensitive: true });
             const hitMaps = [Array.from({ length: 100 }, (_, i) => i)];
             const ranges = buildMatchRanges(hitMaps, target);
             expect(Array.isArray(ranges)).toBe(true);

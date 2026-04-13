@@ -1,4 +1,3 @@
-
 export type Atoms = string;
 
 export type GraphemeIndices = number[];
@@ -28,22 +27,22 @@ export interface Target {
 export type MatchRange = {
     start: number;
     end: number;
-}
+};
 
 export type QueryOptions = {
     caseSensitive?: boolean;
-}
+};
 
 export type TargetOptions = {
     caseSensitive: boolean;
-}
+};
 
 export type MatchOptions = {
     whitespace: "ignore" | "literal" | "normalize";
     caseSensitive: boolean;
     tailSpillover: "never" | "always" | "lastOnly";
     remainder: "strict" | "allow" | "tailSpilloverOnly";
-}
+};
 
 export const DEFAULT_MATCH_OPTIONS: MatchOptions = {
     whitespace: "ignore",

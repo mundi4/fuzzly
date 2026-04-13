@@ -1,22 +1,21 @@
 // Types
-export type {
-    Query,
-    QueryGrapheme,
-    Target,
-    MatchRange,
-    GraphemeIndices,
-    Atoms,
-    QueryOptions,
-    TargetOptions,
-    MatchOptions,
-} from "./types";
-
-// Core builders
-export { buildQuery } from "./buildQuery";
-export { preprocessTarget } from "./preprocessTarget";
-
-// Matching
-export { match } from "./match";
 
 // Post-processing
 export { buildMatchRanges } from "./buildMatchRanges";
+
+// Core builders
+export { buildQuery } from "./buildQuery";
+// Matching
+export { match } from "./match";
+export { preprocessTarget } from "./preprocessTarget";
+export type {
+    Atoms,
+    GraphemeIndices,
+    MatchOptions,
+    MatchRange,
+    Query,
+    QueryGrapheme,
+    QueryOptions,
+    Target,
+    TargetOptions,
+} from "./types";

@@ -1,8 +1,12 @@
-import { type Target, type Query, type GraphemeIndices, type MatchOptions, DEFAULT_MATCH_OPTIONS } from "./types";
+import { DEFAULT_MATCH_OPTIONS, type GraphemeIndices, type MatchOptions, type Query, type Target } from "./types";
 
 // 30분 후에 보면 잊어버릴 코드
 // 조건이 복잡하고 지금 조건들이 현실을 제대로 커버하는지, 어떤 엣지케이스들을 간과했는지... 분석을 더 해봐야 함.
-export function match(query: Query, target: Target, matchOptions: MatchOptions = DEFAULT_MATCH_OPTIONS): GraphemeIndices | null {
+export function match(
+    query: Query,
+    target: Target,
+    matchOptions: MatchOptions = DEFAULT_MATCH_OPTIONS,
+): GraphemeIndices | null {
     // Literal 쿼리 처리
     if (query.literal !== null) {
         const text = query.literal;
@@ -44,8 +48,7 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
 
     const matches: number[] = [];
 
-    TARGET_CHAR_LOOP:
-    while (qi < queryGraphemes.length && tgi < tGraphemes.length) {
+    TARGET_CHAR_LOOP: while (qi < queryGraphemes.length && tgi < tGraphemes.length) {
         const qGrapheme = queryGraphemes[qi];
         const qAtoms = qGrapheme.atoms;
         // console.log(qi, qai, tgi)
@@ -121,7 +124,8 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
                         //     continue TARGET_CHAR_LOOP;
                     } else {
                         // 종성인 경우
-                        const allowTailSpillover = matchOptions.tailSpillover === "always" ||
+                        const allowTailSpillover =
+                            matchOptions.tailSpillover === "always" ||
                             (matchOptions.tailSpillover === "lastOnly" && qi === queryGraphemes.length - 1);
                         if (allowTailSpillover) {
                             matches.push(tgi);
@@ -145,18 +149,19 @@ export function match(query: Query, target: Target, matchOptions: MatchOptions =
                     if (!matchOptions.tailSpillover) {
                         qai = 0;
                         tgi++;
-                        continue TARGET_CHAR_LOOP;
+                        continue;
                     }
                 } else if (matchOptions.remainder === "allow") {
                     // 남은 atom 허용
                 } else if (matchOptions.remainder === "tailSpilloverOnly") {
                     // tailSpillover가 활성화된 경우만 허용
-                    const allowTailSpillover = matchOptions.tailSpillover === "always" ||
+                    const allowTailSpillover =
+                        matchOptions.tailSpillover === "always" ||
                         (matchOptions.tailSpillover === "lastOnly" && qi === queryGraphemes.length - 1);
                     if (!allowTailSpillover) {
                         qai = 0;
                         tgi++;
-                        continue TARGET_CHAR_LOOP;
+                        continue;
                     }
                 }
             }

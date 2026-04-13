@@ -1,16 +1,13 @@
-import type { Target, MatchRange, GraphemeIndices } from "./types";
+import type { GraphemeIndices, MatchRange, Target } from "./types";
 
 /**
  * hitMaps과 Target을 받아서 MatchRange[]로 변환
- * 
+ *
  * 과정:
  * 1. 모든 indices 수집 + 정렬
  * 2. dedup과 range 변환을 한 번의 loop에서 처리
  */
-export function buildMatchRanges(
-    hitMaps: GraphemeIndices[],
-    target: Target
-): MatchRange[] {
+export function buildMatchRanges(hitMaps: GraphemeIndices[], target: Target): MatchRange[] {
     // 모든 indices 수집
     let indices: number[];
 
