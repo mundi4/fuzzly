@@ -87,3 +87,6 @@ logs/
 *.tar
 *.tar.gz
 *.tgz
+
+# Claude Code local state
+.claude/
