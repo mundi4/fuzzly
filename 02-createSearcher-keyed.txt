@@ -1,0 +1,53 @@
+# `createSearcher` 에 keyed/제네릭 오버로드 추가
+
+## 문제
+
+현재 `createSearcher(items: readonly string[], …)` 는 검색 대상을 순수 string 배열로 받는다. 하지만 실무에서 팔레트에 넣는 항목은 대부분 `{ id, label, ... }` 형태의 객체이고, 검색 후 결과에서 원래 객체를 다시 lookup 해야 한다.
+
+현재는 `SearchResult.index` 로 호출자가 원본 배열을 역참조해야 하는데:
+
+- items 배열이 변할 때마다 index 가 무너진다
+- 호출자가 "string 추출 배열" 과 "실제 객체 배열" 두 개를 동기화 유지해야 함
+- `createSearcher` 의 docstring 에 "preprocessTarget 캐싱이 목적" 이라고 돼 있는데, 캐시가 items 와 함께 묶여 있어서 증분 갱신도 불가능
+
+결국 실제 앱에서는 `createSearcher` 를 포기하고 `preprocessTarget + buildQuery + match + buildMatchRanges` 를 직접 호출하게 된다. (스크라이브 Spotlight 에서도 이렇게 했다.)
+
+## 제안
+
+```ts
+export function createSearcher<T>(
+  items: readonly T[],
+  options: SearcherOptions & { key: (item: T) => string },
+): Searcher<T>;
+
+// 기존 시그니처는 backward-compatible 오버로드로 유지
+export function createSearcher(
+  items: readonly string[],
+  options?: SearcherOptions,
+): Searcher<string>;
+
+export type SearchResult<T> = {
+  item: T;
+  ranges: MatchRange[];
+  info: MatchInfo;  // Issue #1 의 메타데이터
+};
+```
+
+이러면 객체 검색이 자연스럽고, `info` 를 함께 받아 호출자가 바로 스코어링 가능하다.
+
+## 선택 — 증분 API
+
+```ts
+interface Searcher<T> {
+  search(query: string): SearchResult<T>[];
+  add(item: T): void;
+  remove(predicate: (item: T) => boolean): void;
+  replaceAll(items: readonly T[]): void;
+}
+```
+
+`add`/`remove` 는 `preprocessTarget` 을 해당 항목에만 돌려서 기존 캐시를 보존한다. 개인 노트 앱처럼 items 가 잦게 바뀌는 환경에서 성능적 의미가 있다. 필수는 아님 — nice-to-have.
+
+## 관련
+
+Issue #1 (match 메타데이터 노출) 이 선행되면 `SearchResult.info` 필드가 자연스럽게 생긴다. 동시에 진행하면 API 가 한번에 정리됨.

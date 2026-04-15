@@ -1,0 +1,40 @@
+# Query 와 Target 의 `caseSensitive` 옵션 불일치 시 조용한 오작동 — 런타임 가드 추가
+
+## 문제
+
+`buildQuery(input, { caseSensitive: true })` 와 `preprocessTarget(str, { caseSensitive: false })` 를 섞어 만든 `Query` 와 `Target` 을 `match` 에 넣으면 매칭이 조용히 잘못된다. `CLAUDE.md` 에도 "make sure query and target were built with consistent case settings" 라고 명시돼 있지만, 실제 런타임/타입 단에서는 아무 검사가 없다.
+
+이건 command-palette 앱에서 특히 잘 발생한다 — target 목록을 언제 어디서 preprocess 했는지, query 를 어디서 build 했는지 코드 경로가 분리돼 있어서 한쪽만 옵션을 바꾸면 기타 테스트를 통과하면서도 production 에서 검색이 "미묘하게 이상한" 상태가 된다.
+
+## 제안 (비침습적)
+
+`Query` / `Target` 에 `caseSensitive` 필드를 박고, `match` 도입부에서 assert:
+
+```ts
+export interface Query {
+  // 기존 필드...
+  caseSensitive: boolean;
+}
+
+export interface Target {
+  // 기존 필드...
+  caseSensitive: boolean;
+}
+
+export function match(query: Query, target: Target, options: MatchOptions) {
+  if (query.caseSensitive !== target.caseSensitive) {
+    throw new Error(
+      "fuzzly: Query and Target were built with mismatched caseSensitive options",
+    );
+  }
+  // ...
+}
+```
+
+## 더 나은 옵션 (phantom type)
+
+타입 단에서 막을 수도 있지만 TS 에서 phantom type 은 문법적으로 조금 지저분하다. 런타임 assert 쪽이 현실적.
+
+## 우선순위
+
+critical bug 는 아니지만 **조용한 오작동** 은 제일 찾기 힘든 종류의 버그라 예방 가치가 크다. 몇 줄짜리 변경.
