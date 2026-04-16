@@ -2,8 +2,12 @@ import segmenter from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
 import type { Query, QueryGrapheme } from "./types";
 
+function normalizeForMatch(input: string): string {
+    return input.replace(/[A-Z]/g, (char) => char.toLowerCase());
+}
+
 export function buildQuery(input: string): Query {
-    const cleaned = input.toLowerCase();
+    const cleaned = normalizeForMatch(input);
 
     if (cleaned === "") {
         return {
