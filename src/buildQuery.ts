@@ -13,6 +13,7 @@ export function buildQuery(input: string): Query {
         return {
             input,
             graphemes: [],
+            atoms: "",
         };
     }
 
@@ -31,8 +32,14 @@ export function buildQuery(input: string): Query {
         });
     }
 
+    let atoms = "";
+    for (const g of graphemes) {
+        atoms += g.atoms;
+    }
+
     return {
         input,
         graphemes,
+        atoms,
     };
 }

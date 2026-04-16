@@ -1,6 +1,6 @@
 import { buildMatchRanges } from "./buildMatchRanges";
 import { buildQuery } from "./buildQuery";
-import { match, matchLiteral } from "./match";
+import { matchBest, matchLiteral } from "./match";
 import { preprocessTarget } from "./preprocessTarget";
 import type { MatchResult, Searcher, SearcherOptions, SearchOptions, SearchResult, Target } from "./types";
 
@@ -25,47 +25,57 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         target: preprocessTarget(keyFn(item)),
     }));
 
+    // 세션 상태: 이전 쿼리의 atom 시퀀스와 매치된 엔트리 인덱스
+    let prevAtoms = "";
+    let prevMatchedIndices: Set<number> | null = null;
+
+    function resetSession() {
+        prevAtoms = "";
+        prevMatchedIndices = null;
+    }
+
     return {
         search(queryInput: string, searchOpts: SearchOptions = {}): SearchResult<T>[] {
             const results: SearchResult<T>[] = [];
             const scoreFn = searchOpts.score;
             const limit = searchOpts.limit ?? 0;
 
-            if (searchOpts.literal) {
-                for (const entry of entries) {
-                    const result = matchLiteral(queryInput, entry.target);
-                    if (result === null) continue;
+            // 세션 연속 판단을 위한 atom 시퀀스
+            const query = searchOpts.literal ? null : buildQuery(queryInput);
+            const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
-                    results.push(makeSearchResult(entry.item, entry.target, result));
+            // 현재 atoms가 이전 atoms의 확장인가?
+            const sessionFilter =
+                prevAtoms.length > 0 &&
+                currentAtoms.length > prevAtoms.length &&
+                currentAtoms.startsWith(prevAtoms) &&
+                prevMatchedIndices !== null
+                    ? prevMatchedIndices
+                    : null;
 
-                    if (scoreFn) {
-                        results[results.length - 1].score = scoreFn(result);
-                    } else if (limit > 0 && results.length >= limit) {
-                        break;
-                    }
-                }
-            } else {
-                const query = buildQuery(queryInput);
+            const matchedIndices = new Set<number>();
 
-                for (const entry of entries) {
-                    const result = match(query, entry.target);
-                    if (result === null) continue;
+            for (let i = 0; i < entries.length; i++) {
+                if (sessionFilter && !sessionFilter.has(i)) continue;
 
-                    results.push(makeSearchResult(entry.item, entry.target, result));
+                const result = query
+                    ? matchBest(query, entries[i].target)
+                    : matchLiteral(queryInput, entries[i].target);
+                if (result === null) continue;
 
-                    if (scoreFn) {
-                        results[results.length - 1].score = scoreFn(result);
-                    } else if (limit > 0 && results.length >= limit) {
-                        break;
-                    }
-                }
+                matchedIndices.add(i);
+                const sr = makeSearchResult(entries[i].item, entries[i].target, result);
+                sr.score = scoreFn ? scoreFn(result) : (result.score ?? 0);
+                results.push(sr);
             }
 
-            if (scoreFn) {
-                results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-                if (limit > 0 && results.length > limit) {
-                    results.length = limit;
-                }
+            prevAtoms = currentAtoms;
+            prevMatchedIndices = matchedIndices;
+
+            // 항상 score 내림차순 정렬
+            results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+            if (limit > 0 && results.length > limit) {
+                results.length = limit;
             }
 
             return results;
@@ -75,10 +85,12 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             for (const item of newItems) {
                 entries.push({ item, target: preprocessTarget(keyFn(item)) });
             }
+            resetSession();
         },
 
         remove(predicate: (item: T) => boolean) {
             entries = entries.filter((e) => !predicate(e.item));
+            resetSession();
         },
 
         replaceAll(newItems: readonly T[]) {
@@ -86,6 +98,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 item,
                 target: preprocessTarget(keyFn(item)),
             }));
+            resetSession();
         },
     };
 }
