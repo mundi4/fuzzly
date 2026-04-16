@@ -58,9 +58,9 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         target: preprocessTarget(keyFn(item)),
     }));
 
-    // 세션 상태: 이전 쿼리의 atom 시퀀스와 매치된 엔트리 인덱스
+    // 세션 상태: 이전 쿼리의 atom 시퀀스와 매치된 엔트리 인덱스 배열
     let prevAtoms = "";
-    let prevMatchedIndices: Set<number> | null = null;
+    let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevAtoms = "";
@@ -77,7 +77,8 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
             // 현재 atoms가 이전 atoms의 확장인가?
-            const sessionFilter =
+            // 세션 연속이면 이전 매치 인덱스 배열을 직접 순회, 아니면 null → 전체 순회
+            const sessionIndices =
                 prevAtoms.length > 0 &&
                 currentAtoms.length > prevAtoms.length &&
                 currentAtoms.startsWith(prevAtoms) &&
@@ -85,7 +86,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                     ? prevMatchedIndices
                     : null;
 
-            const matchedIndices = new Set<number>();
+            const matchedIndices: number[] = [];
 
             let results: SearchResult<T>[];
 
@@ -93,16 +94,15 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 // 상위 limit개만 유지하는 min-heap
                 const heap: SearchResult<T>[] = [];
                 let minScore = -Infinity;
+                const scan = sessionIndices ?? iota(entries.length);
 
-                for (let i = 0; i < entries.length; i++) {
-                    if (sessionFilter && !sessionFilter.has(i)) continue;
-
+                for (const i of scan) {
                     const result = query
                         ? matchBest(query, entries[i].target)
                         : matchLiteral(queryInput, entries[i].target);
                     if (result === null) continue;
 
-                    matchedIndices.add(i);
+                    matchedIndices.push(i);
                     const score = scoreFn ? scoreFn(result) : (result.score ?? 0);
 
                     if (heap.length < limit) {
@@ -122,16 +122,15 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             } else {
                 // limit 없음: 전체 수집 후 정렬
                 results = [];
+                const scan = sessionIndices ?? iota(entries.length);
 
-                for (let i = 0; i < entries.length; i++) {
-                    if (sessionFilter && !sessionFilter.has(i)) continue;
-
+                for (const i of scan) {
                     const result = query
                         ? matchBest(query, entries[i].target)
                         : matchLiteral(queryInput, entries[i].target);
                     if (result === null) continue;
 
-                    matchedIndices.add(i);
+                    matchedIndices.push(i);
                     const sr = makeSearchResult(entries[i].item, entries[i].target, result);
                     sr.score = scoreFn ? scoreFn(result) : (result.score ?? 0);
                     results.push(sr);
@@ -166,6 +165,11 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             resetSession();
         },
     };
+}
+
+// 0..n-1 인덱스 이터레이터 (세션 없을 때 전체 순회용)
+function* iota(n: number): Generator<number> {
+    for (let i = 0; i < n; i++) yield i;
 }
 
 function makeSearchResult<T>(item: T, target: Target, result: MatchResult): SearchResult<T> {
