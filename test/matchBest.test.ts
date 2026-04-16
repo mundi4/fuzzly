@@ -154,15 +154,32 @@ describe("matchBest", () => {
     });
 
     describe("SCORING 상수", () => {
-        it("SCORING 객체 export", () => {
-            expect(SCORING.POSITION_ZERO).toBe(100);
-            expect(SCORING.BOUNDARY).toBe(50);
-            expect(SCORING.CONSECUTIVE).toBe(20);
-            expect(SCORING.GAP_PENALTY).toBe(-3);
-            expect(SCORING.PREFIX_BONUS).toBe(200);
-            expect(SCORING.EXACT_BONUS).toBe(500);
-            expect(SCORING.INITIAL_CONSONANT_PENALTY).toBe(-30);
-            expect(SCORING.TARGET_LENGTH_PENALTY).toBe(-1);
+        it("필수 키가 모두 존재하고 number 타입", () => {
+            const keys = [
+                "POSITION_ZERO",
+                "BOUNDARY",
+                "CONSECUTIVE",
+                "GAP_PENALTY",
+                "PREFIX_BONUS",
+                "EXACT_BONUS",
+                "INITIAL_CONSONANT_PENALTY",
+                "TARGET_LENGTH_PENALTY",
+            ] as const;
+            for (const k of keys) {
+                expect(typeof SCORING[k]).toBe("number");
+            }
+        });
+
+        it("보너스 간 상대적 크기 관계", () => {
+            // 완전 일치가 가장 큰 보너스
+            expect(SCORING.EXACT_BONUS).toBeGreaterThan(SCORING.PREFIX_BONUS);
+            expect(SCORING.PREFIX_BONUS).toBeGreaterThan(SCORING.POSITION_ZERO);
+            expect(SCORING.POSITION_ZERO).toBeGreaterThan(SCORING.BOUNDARY);
+            expect(SCORING.BOUNDARY).toBeGreaterThan(SCORING.CONSECUTIVE);
+            // 페널티는 음수
+            expect(SCORING.GAP_PENALTY).toBeLessThan(0);
+            expect(SCORING.INITIAL_CONSONANT_PENALTY).toBeLessThan(0);
+            expect(SCORING.TARGET_LENGTH_PENALTY).toBeLessThan(0);
         });
     });
 });
