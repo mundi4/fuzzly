@@ -43,7 +43,7 @@ export function resolveScoring(config: ScoringConfig | undefined, target: Target
     } else if (typeof gb === "function") {
         getBonus = (gi) => gb(gi, target);
     } else {
-        getBonus = (gi) => (gi < gb.length ? gb[gi] : 0);
+        getBonus = (gi) => (gi < gb.length ? Number(gb[gi] ?? 0) : 0);
     }
     return {
         positionZero: w?.positionZero ?? SCORING.POSITION_ZERO,
