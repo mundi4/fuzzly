@@ -58,12 +58,14 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         target: preprocessTarget(keyFn(item)),
     }));
 
-    // 세션 상태: 이전 쿼리의 atom 시퀀스와 매치된 엔트리 인덱스 배열
+    // 세션 상태: 이전 쿼리의 atom 시퀀스, 매칭 모드, 매치된 엔트리 인덱스 배열
     let prevAtoms = "";
+    let prevLiteral = false;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevAtoms = "";
+        prevLiteral = false;
         prevMatchedIndices = null;
     }
 
@@ -77,11 +79,13 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
             // 현재 atoms가 이전 atoms의 확장인가?
-            // 세션 연속이면 이전 매치 인덱스 배열을 직접 순회, 아니면 null → 전체 순회
+            // 매칭 모드(literal/fuzzy)가 다르면 세션 단절
+            const currentLiteral = !!searchOpts.literal;
             const sessionIndices =
                 prevAtoms.length > 0 &&
                 currentAtoms.length > prevAtoms.length &&
                 currentAtoms.startsWith(prevAtoms) &&
+                prevLiteral === currentLiteral &&
                 prevMatchedIndices !== null
                     ? prevMatchedIndices
                     : null;
@@ -140,6 +144,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             }
 
             prevAtoms = currentAtoms;
+            prevLiteral = currentLiteral;
             prevMatchedIndices = matchedIndices;
 
             return results;
