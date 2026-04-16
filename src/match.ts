@@ -511,7 +511,11 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
     }
 
     // exact 보너스: 타겟의 모든 grapheme을 빠짐없이 커버 (0..len-1 연속)
-    if (indices.length === tGraphemes.length && indices[0] === 0 && indices[indices.length - 1] === tGraphemes.length - 1) {
+    if (
+        indices.length === tGraphemes.length &&
+        indices[0] === 0 &&
+        indices[indices.length - 1] === tGraphemes.length - 1
+    ) {
         score += SCORING.EXACT_BONUS;
     }
 
