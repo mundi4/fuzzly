@@ -161,13 +161,7 @@ describe("IME composer — typingStates", () => {
         });
 
         it("전략기획부 초성 약식 (ㅈㄺㅎㅂ)", () => {
-            expect(typingStates(["ㅈ", "ㄹ", "ㄱ", "ㅎ", "ㅂ"])).toEqual([
-                "ㅈ",
-                "ㅈㄹ",
-                "ㅈㄺ",
-                "ㅈㄺㅎ",
-                "ㅈㄺㅎㅂ",
-            ]);
+            expect(typingStates(["ㅈ", "ㄹ", "ㄱ", "ㅎ", "ㅂ"])).toEqual(["ㅈ", "ㅈㄹ", "ㅈㄺ", "ㅈㄺㅎ", "ㅈㄺㅎㅂ"]);
         });
 
         it("저략 (ㅈㅓㄹㅑㄱ)", () => {
@@ -211,17 +205,7 @@ describe("queryToKeystrokes", () => {
 
 describe("journeyFrom (end-to-end)", () => {
     it("journey의 마지막 원소는 입력과 같다", () => {
-        const inputs = [
-            "가",
-            "값",
-            "감사합니다",
-            "전략기획부",
-            "ㅈㄺㅎㅂ",
-            "ㅈㄼ",
-            "저략",
-            "ㅈ랴깋ㅂ",
-            "abc",
-        ];
+        const inputs = ["가", "값", "감사합니다", "전략기획부", "ㅈㄺㅎㅂ", "ㅈㄼ", "저략", "ㅈ랴깋ㅂ", "abc"];
         for (const q of inputs) {
             const j = journeyFrom(q);
             expect(j[j.length - 1], `journey of "${q}"`).toBe(q);

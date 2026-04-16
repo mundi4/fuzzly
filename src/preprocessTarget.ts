@@ -1,18 +1,14 @@
 import segmenter from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
-import type { Target, TargetGrapheme, TargetOptions } from "./types";
+import type { Target, TargetGrapheme } from "./types";
 
-const DEFAULT_OPTIONS: TargetOptions = {
-    caseSensitive: false,
-};
-
-export function preprocessTarget(input: string, options: TargetOptions = DEFAULT_OPTIONS): Target {
+export function preprocessTarget(input: string): Target {
     const graphemes: TargetGrapheme[] = [];
     const graphemeIndexes: number[] = [];
     const charIndexes: number[] = [];
 
     let graphemeIndex = 0;
-    const normalizedInput = options.caseSensitive ? input : input.toLowerCase();
+    const normalizedInput = input.toLowerCase();
 
     for (const seg of segmenter.segment(normalizedInput)) {
         const cluster = seg.segment;
@@ -37,11 +33,22 @@ export function preprocessTarget(input: string, options: TargetOptions = DEFAULT
         graphemeIndex++;
     }
 
+    const boundaryFlags: boolean[] = [];
+    for (let i = 0; i < graphemes.length; i++) {
+        if (i === 0) {
+            boundaryFlags[i] = true;
+        } else {
+            const prev = graphemes[i - 1].atoms;
+            boundaryFlags[i] = prev === " " || prev === "_" || prev === "-" || prev === ".";
+        }
+    }
+
     return {
         input,
         normalizedInput,
         graphemes,
         graphemeIndexes,
         charIndexes,
+        boundaryFlags,
     };
 }

@@ -4,10 +4,11 @@
   "type": "module",
   "description": "커맨트팔레트 용 그냥대충 애매하게 한글 매칭",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./score": "./src/score.ts"
   },
   "scripts": {
-    "build": "tsup src/index.ts --dts --format esm,cjs,iife --global-name fuzzly",
+    "build": "tsup src/index.ts src/score.ts --dts --format esm,cjs,iife --global-name fuzzly",
     "test": "vitest run",
     "test:ui": "vitest",
     "check": "biome check",
