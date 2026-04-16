@@ -4,6 +4,39 @@ import { matchBest, matchLiteral } from "./match";
 import { preprocessTarget } from "./preprocessTarget";
 import type { MatchResult, Searcher, SearcherOptions, SearchOptions, SearchResult, Target } from "./types";
 
+// ---------------------------------------------------------------------------
+// Min-heap (score 오름차순) — limit > 0일 때 상위 N개만 유지
+// ---------------------------------------------------------------------------
+
+function heapPush<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
+    heap.push(item);
+    let i = heap.length - 1;
+    while (i > 0) {
+        const parent = (i - 1) >> 1;
+        if ((heap[parent].score ?? 0) <= (heap[i].score ?? 0)) break;
+        [heap[parent], heap[i]] = [heap[i], heap[parent]];
+        i = parent;
+    }
+}
+
+function heapReplace<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
+    heap[0] = item;
+    const n = heap.length;
+    let i = 0;
+    for (;;) {
+        let smallest = i;
+        const l = 2 * i + 1;
+        const r = 2 * i + 2;
+        if (l < n && (heap[l].score ?? 0) < (heap[smallest].score ?? 0)) smallest = l;
+        if (r < n && (heap[r].score ?? 0) < (heap[smallest].score ?? 0)) smallest = r;
+        if (smallest === i) break;
+        [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
+        i = smallest;
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 export function createSearcher<T>(
     items: readonly T[],
     options: SearcherOptions<T> & { key: (item: T) => string },
@@ -36,7 +69,6 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
     return {
         search(queryInput: string, searchOpts: SearchOptions = {}): SearchResult<T>[] {
-            const results: SearchResult<T>[] = [];
             const scoreFn = searchOpts.score;
             const limit = searchOpts.limit ?? 0;
 
@@ -55,28 +87,61 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
             const matchedIndices = new Set<number>();
 
-            for (let i = 0; i < entries.length; i++) {
-                if (sessionFilter && !sessionFilter.has(i)) continue;
+            let results: SearchResult<T>[];
 
-                const result = query
-                    ? matchBest(query, entries[i].target)
-                    : matchLiteral(queryInput, entries[i].target);
-                if (result === null) continue;
+            if (limit > 0) {
+                // 상위 limit개만 유지하는 min-heap
+                const heap: SearchResult<T>[] = [];
+                let minScore = -Infinity;
 
-                matchedIndices.add(i);
-                const sr = makeSearchResult(entries[i].item, entries[i].target, result);
-                sr.score = scoreFn ? scoreFn(result) : (result.score ?? 0);
-                results.push(sr);
+                for (let i = 0; i < entries.length; i++) {
+                    if (sessionFilter && !sessionFilter.has(i)) continue;
+
+                    const result = query
+                        ? matchBest(query, entries[i].target)
+                        : matchLiteral(queryInput, entries[i].target);
+                    if (result === null) continue;
+
+                    matchedIndices.add(i);
+                    const score = scoreFn ? scoreFn(result) : (result.score ?? 0);
+
+                    if (heap.length < limit) {
+                        const sr = makeSearchResult(entries[i].item, entries[i].target, result);
+                        sr.score = score;
+                        heapPush(heap, sr);
+                        if (heap.length === limit) minScore = heap[0].score ?? 0;
+                    } else if (score > minScore) {
+                        const sr = makeSearchResult(entries[i].item, entries[i].target, result);
+                        sr.score = score;
+                        heapReplace(heap, sr);
+                        minScore = heap[0].score ?? 0;
+                    }
+                }
+
+                results = heap.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+            } else {
+                // limit 없음: 전체 수집 후 정렬
+                results = [];
+
+                for (let i = 0; i < entries.length; i++) {
+                    if (sessionFilter && !sessionFilter.has(i)) continue;
+
+                    const result = query
+                        ? matchBest(query, entries[i].target)
+                        : matchLiteral(queryInput, entries[i].target);
+                    if (result === null) continue;
+
+                    matchedIndices.add(i);
+                    const sr = makeSearchResult(entries[i].item, entries[i].target, result);
+                    sr.score = scoreFn ? scoreFn(result) : (result.score ?? 0);
+                    results.push(sr);
+                }
+
+                results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
             }
 
             prevAtoms = currentAtoms;
             prevMatchedIndices = matchedIndices;
-
-            // 항상 score 내림차순 정렬
-            results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-            if (limit > 0 && results.length > limit) {
-                results.length = limit;
-            }
 
             return results;
         },
