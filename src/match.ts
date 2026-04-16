@@ -372,14 +372,6 @@ function candidatePositionScore(c: Candidate, target: Target): number {
     return s;
 }
 
-// 전이 점수 (연속 보너스 or 갭 페널티)
-function transitionScore(prevEndTgi: number, currStartTgi: number): number {
-    if (currStartTgi === prevEndTgi + 1) {
-        return SCORING.CONSECUTIVE;
-    }
-    return SCORING.GAP_PENALTY * (currStartTgi - prevEndTgi - 1);
-}
-
 export function matchBest(query: Query, target: Target): MatchResult | null {
     const qGraphemes = query.graphemes;
     const tGraphemes = target.graphemes;
@@ -406,6 +398,7 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
     }
 
     // Phase 2: DP — dp[qi][ci] = qi번째 쿼리 grapheme에 ci번째 후보를 사용할 때 최대 스코어
+    // 전이 최적화: 중첩 루프 대신 prefix-max sweep으로 O(Q×C) 전이
     const dpScores: number[][] = [];
     const dpParents: number[][] = [];
 
@@ -421,35 +414,68 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
 
     for (let qi = 1; qi < Q; qi++) {
         const currCandidates = allCandidates[qi];
-        const prevCandidates = allCandidates[qi - 1];
+        const prevCands = allCandidates[qi - 1];
+        const prevScoresArr = dpScores[qi - 1];
         const currScores: number[] = [];
         const currParent: number[] = [];
 
+        // 전처리: 유효한 predecessor를 endTgi 순으로 수집
+        const preds: { endTgi: number; score: number; gapVal: number; pci: number }[] = [];
+        for (let pci = 0; pci < prevCands.length; pci++) {
+            const s = prevScoresArr[pci];
+            if (s === -Infinity) continue;
+            const e = prevCands[pci].endTgi;
+            preds.push({ endTgi: e, score: s, gapVal: s - SCORING.GAP_PENALTY * e, pci });
+        }
+        preds.sort((a, b) => a.endTgi - b.endTgi);
+
+        // consecutive lookup: endTgi → 해당 endTgi에서 최대 (score + CONSECUTIVE, pci)
+        const consMap = new Map<number, { total: number; pci: number }>();
+        for (const p of preds) {
+            const total = p.score + SCORING.CONSECUTIVE;
+            const existing = consMap.get(p.endTgi);
+            if (!existing || total > existing.total) {
+                consMap.set(p.endTgi, { total, pci: p.pci });
+            }
+        }
+
+        // gap sweep: currCandidates는 startTgi 순이므로 pointer 한 방향 전진
+        let gapScanPos = -1;
+        let gapBestVal = -Infinity;
+        let gapBestPci = -1;
+
         for (let ci = 0; ci < currCandidates.length; ci++) {
-            const cc = currCandidates[ci];
+            const s = currCandidates[ci].startTgi;
             let bestScore = -Infinity;
             let bestPredIdx = -1;
 
-            for (let pci = 0; pci < prevCandidates.length; pci++) {
-                const pc = prevCandidates[pci];
-                if (pc.endTgi >= cc.startTgi) continue; // 단조 증가 위반
-
-                const prevScore = dpScores[qi - 1][pci];
-                if (prevScore === -Infinity) continue;
-
-                const trans = transitionScore(pc.endTgi, cc.startTgi);
-                const total = prevScore + trans;
-                if (total > bestScore) {
-                    bestScore = total;
-                    bestPredIdx = pci;
+            // gap: endTgi <= s-2인 predecessor의 누적 최대 gapVal
+            const gapThreshold = s - 2;
+            while (gapScanPos + 1 < preds.length && preds[gapScanPos + 1].endTgi <= gapThreshold) {
+                gapScanPos++;
+                if (preds[gapScanPos].gapVal > gapBestVal) {
+                    gapBestVal = preds[gapScanPos].gapVal;
+                    gapBestPci = preds[gapScanPos].pci;
                 }
+            }
+            if (gapBestVal > -Infinity) {
+                const gapTotal = gapBestVal + SCORING.GAP_PENALTY * (s - 1);
+                bestScore = gapTotal;
+                bestPredIdx = gapBestPci;
+            }
+
+            // consecutive: endTgi === s-1
+            const consEntry = consMap.get(s - 1);
+            if (consEntry && consEntry.total > bestScore) {
+                bestScore = consEntry.total;
+                bestPredIdx = consEntry.pci;
             }
 
             if (bestPredIdx === -1) {
                 currScores.push(-Infinity);
                 currParent.push(-1);
             } else {
-                currScores.push(bestScore + candidatePositionScore(cc, target));
+                currScores.push(bestScore + candidatePositionScore(currCandidates[ci], target));
                 currParent.push(bestPredIdx);
             }
         }
