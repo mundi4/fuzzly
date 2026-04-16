@@ -145,8 +145,9 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
                 for (const i of scan) {
                     const t = entries[i].target;
-                    const sc = resolveScoringConfig ? resolveScoringConfig(t) : undefined;
-                    const result = query ? matchBest(query, t, sc) : matchLiteral(queryInput, t);
+                    const result = query
+                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined)
+                        : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
                     matchedIndices.push(i);
