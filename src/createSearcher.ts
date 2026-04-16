@@ -10,9 +10,16 @@ export function createSearcher<T>(
 ): Searcher<T>;
 export function createSearcher(items: readonly string[], options?: SearcherOptions<string>): Searcher<string>;
 export function createSearcher<T>(items: readonly T[], options: SearcherOptions<T> = {}): Searcher<T> {
+    const key = (options as SearcherOptions<T> & { key?: (item: T) => string }).key;
     const keyFn: (item: T) => string =
-        (options as SearcherOptions<T> & { key?: (item: T) => string }).key ?? ((item: T) => item as unknown as string);
+        key ??
+        ((item: T) => {
+            if (typeof item === "string") {
+                return item;
+            }
 
+            throw new TypeError("createSearcher requires options.key when items are not strings");
+        });
     let entries: Array<{ item: T; target: Target }> = items.map((item) => ({
         item,
         target: preprocessTarget(keyFn(item)),
