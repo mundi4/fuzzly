@@ -11,7 +11,6 @@ export interface QueryGrapheme {
 
 export interface Query {
     input: string;
-    literal: string | null;
     graphemes: QueryGrapheme[];
 }
 
@@ -27,25 +26,43 @@ export interface Target {
     graphemes: TargetGrapheme[];
     graphemeIndexes: number[];
     charIndexes: number[];
+    boundaryFlags: boolean[];
 }
+
+export type MatchResult = {
+    indices: GraphemeIndices;
+    startsAtZero: boolean;
+    runCount: number;
+    boundaryHits: number;
+    initialConsonantOnly: boolean;
+};
 
 export type MatchRange = {
     start: number;
     end: number;
 };
 
-export type QueryOptions = {
-    caseSensitive?: boolean;
+export type SearcherOptions<T = string> = {
+    key?: (item: T) => string;
 };
 
-export type TargetOptions = {
-    caseSensitive?: boolean;
+export type SearchOptions = {
+    limit?: number;
+    literal?: boolean;
+    score?: (result: MatchResult) => number;
 };
 
-export type MatchOptions = {
-    caseSensitive: boolean;
+export type SearchResult<T = string> = {
+    item: T;
+    target: Target;
+    result: MatchResult;
+    score?: number;
+    ranges: () => MatchRange[];
 };
 
-export const DEFAULT_MATCH_OPTIONS: MatchOptions = {
-    caseSensitive: false,
-};
+export interface Searcher<T = string> {
+    search(queryInput: string, options?: SearchOptions): SearchResult<T>[];
+    add(...items: T[]): void;
+    remove(predicate: (item: T) => boolean): void;
+    replaceAll(items: readonly T[]): void;
+}

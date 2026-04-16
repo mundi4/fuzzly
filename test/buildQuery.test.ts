@@ -6,7 +6,6 @@ describe("buildQuery - 유닛 테스트", () => {
         it("간단한 한글", () => {
             const query = buildQuery("안");
             expect(query).not.toBeNull();
-            expect(query.literal).toBe(null);
             expect(query.graphemes.length).toBe(1);
         });
 
@@ -41,74 +40,16 @@ describe("buildQuery - 유닛 테스트", () => {
         });
     });
 
-    describe("리터럴 쿼리", () => {
-        it("기본 리터럴", () => {
-            const query = buildQuery('"안녕"');
-            expect(query.literal).toBe("안녕");
-            expect(query.input).toBe('"안녕"');
-            expect(query.graphemes.length).toBe(0);
-        });
-
-        it("리터럴 - 공백 포함", () => {
-            const query = buildQuery('"안 녕 하"');
-            expect(query.literal).toBe("안 녕 하");
-            expect(query.input).toBe('"안 녕 하"');
-        });
-
-        it("리터럴 - 이모지", () => {
-            const query = buildQuery('"😊👍"');
-            expect(query.literal).toBe("😊👍");
-            expect(query.input).toBe('"😊👍"');
-        });
-
-        it("리터럴 - 특수문자", () => {
-            const query = buildQuery('"!@#$%"');
-            expect(query.literal).toBe("!@#$%");
-            expect(query.input).toBe('"!@#$%"');
-        });
-
-        it("리터럴 - 한글 영문 숫자 혼합", () => {
-            const query = buildQuery('"안a1"');
-            expect(query.literal).toBe("안a1");
-            expect(query.input).toBe('"안a1"');
-        });
-    });
-
-    describe("리터럴 실패 케이스", () => {
-        it("따옴표 한 개만", () => {
-            const query = buildQuery('"안녕');
-            expect(query.literal).toBe(null);
-        });
-
-        it("따옴표 뒤에만", () => {
-            const query = buildQuery('안녕"');
-            expect(query.literal).toBe(null);
-        });
-
-        it("중간에 따옴표", () => {
-            const query = buildQuery('안"녕');
-            expect(query.literal).toBe(null);
-        });
-
-        it("빈 리터럴 쌍", () => {
-            const query = buildQuery('""');
-            expect(query.literal).toBe("");
-            expect(query.input).toBe('""');
-        });
-    });
-
     describe("엣지 케이스", () => {
         it("빈 문자열", () => {
             const query = buildQuery("");
             expect(query.input).toBe("");
-            expect(query.literal).toBe(null);
             expect(query.graphemes.length).toBe(0);
         });
 
         it("공백만", () => {
             const query = buildQuery("   ");
             expect(query).not.toBeNull();
-            expect(query.literal).toBe(null);
         });
 
         it("탭", () => {
@@ -126,36 +67,31 @@ describe("buildQuery - 유닛 테스트", () => {
             expect(query).not.toBeNull();
             expect(query.graphemes.length).toBeGreaterThan(0);
         });
+
+        it("따옴표가 포함된 쿼리 (일반 문자로 처리)", () => {
+            const query = buildQuery('"안녕"');
+            expect(query).not.toBeNull();
+            expect(query.graphemes.length).toBeGreaterThan(0);
+        });
     });
 
-    describe("BuildQueryOptions - caseSensitive", () => {
-        it("기본값 (false)", () => {
-            const query1 = buildQuery("ABC");
-            const query2 = buildQuery("abc");
-            expect(query1).not.toBeNull();
-            expect(query2).not.toBeNull();
-        });
-
-        it("caseSensitive: true", () => {
-            const query = buildQuery("ABC", { caseSensitive: true });
+    describe("대소문자 (항상 소문자 정규화)", () => {
+        it("대문자 입력은 소문자로 정규화", () => {
+            const query = buildQuery("ABC");
             expect(query).not.toBeNull();
+            expect(query.graphemes[0].atoms).toBe("a");
+        });
+
+        it("혼합 대소문자도 소문자로 정규화", () => {
+            const query = buildQuery("AbC");
+            expect(query.graphemes[0].atoms).toBe("a");
+            expect(query.graphemes[1].atoms).toBe("b");
+            expect(query.graphemes[2].atoms).toBe("c");
+        });
+
+        it("input 필드는 원본 유지", () => {
+            const query = buildQuery("ABC");
             expect(query.input).toBe("ABC");
-        });
-
-        it("caseSensitive: false", () => {
-            const query = buildQuery("ABC", { caseSensitive: false });
-            expect(query).not.toBeNull();
-            expect(query.input).toBe("ABC");
-        });
-
-        it("혼합 대소문자 - caseSensitive true", () => {
-            const query = buildQuery("AbC", { caseSensitive: true });
-            expect(query.input).toBe("AbC");
-        });
-
-        it("혼합 대소문자 - caseSensitive false", () => {
-            const query = buildQuery("AbC", { caseSensitive: false });
-            expect(query.input).toBe("AbC");
         });
     });
 
@@ -185,7 +121,7 @@ describe("buildQuery - 유닛 테스트", () => {
     });
 
     describe("쿼리 구조 검증", () => {
-        it("query.text가 정규화됨", () => {
+        it("query.input이 정규화됨", () => {
             const query = buildQuery("안녕");
             expect(query.input).toBeDefined();
             expect(typeof query.input).toBe("string");
@@ -239,13 +175,6 @@ describe("buildQuery - 유닛 테스트", () => {
             const query = buildQuery(longQuery);
             expect(query).not.toBeNull();
             expect(query.graphemes.length).toBe(100);
-        });
-
-        it("매우 긴 리터럴", () => {
-            const longText = "안".repeat(100);
-            const query = buildQuery(`"${longText}"`);
-            expect(query.literal).toBe("안".repeat(100));
-            expect(query.input.length).toBe(100 + `""`.length);
         });
 
         it("매우 긴 영문", () => {

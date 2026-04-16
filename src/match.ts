@@ -1,4 +1,4 @@
-import { DEFAULT_MATCH_OPTIONS, type GraphemeIndices, type MatchOptions, type Query, type Target } from "./types";
+import type { MatchResult, Query, QueryGrapheme, Target } from "./types";
 
 /*
  * 매칭 모델
@@ -17,38 +17,40 @@ import { DEFAULT_MATCH_OPTIONS, type GraphemeIndices, type MatchOptions, type Qu
  * 쿼리 종성 phase는 anchor 음절의 종성부터 시작해서 이후 음절들의 자음 자리로 자유롭게
  * 넘어갈 수 있다.
  */
-export function match(
-    query: Query,
-    target: Target,
-    _matchOptions: MatchOptions = DEFAULT_MATCH_OPTIONS,
-): GraphemeIndices | null {
-    // Literal 쿼리 처리
-    if (query.literal !== null) {
-        const text = query.literal;
-        if (text === "") {
-            return [];
-        }
 
-        const foundAt = target.normalizedInput.indexOf(text);
-        if (foundAt >= 0) {
-            const indexes: number[] = [];
-            const graphemeIndexes = target.graphemeIndexes;
-            for (let i = 0; i < text.length; i++) {
-                const graphemeIndex = graphemeIndexes[foundAt + i];
-                if (indexes[indexes.length - 1] !== graphemeIndex) {
-                    indexes.push(graphemeIndex);
-                }
-            }
-            return indexes;
-        }
+function buildMatchResult(indices: number[], target: Target, queryGraphemes: QueryGrapheme[]): MatchResult {
+    const startsAtZero = indices.length > 0 && indices[0] === 0;
 
-        return null;
+    let runCount = indices.length > 0 ? 1 : 0;
+    for (let i = 1; i < indices.length; i++) {
+        if (indices[i] !== indices[i - 1] + 1 && indices[i] !== indices[i - 1]) {
+            runCount++;
+        }
     }
 
+    let boundaryHits = 0;
+    for (const idx of indices) {
+        if (target.boundaryFlags[idx]) boundaryHits++;
+    }
+
+    let initialConsonantOnly = queryGraphemes.length > 0;
+    for (const qg of queryGraphemes) {
+        if (qg.vowelIndex !== -1) {
+            initialConsonantOnly = false;
+            break;
+        }
+    }
+
+    return { indices, startsAtZero, runCount, boundaryHits, initialConsonantOnly };
+}
+
+export function match(query: Query, target: Target): MatchResult | null {
     const qGraphemes = query.graphemes;
     const tGraphemes = target.graphemes;
 
-    if (qGraphemes.length === 0) return [];
+    if (qGraphemes.length === 0) {
+        return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, initialConsonantOnly: false };
+    }
     if (qGraphemes.length > tGraphemes.length) return null;
 
     const matches: number[] = [];
@@ -180,5 +182,24 @@ export function match(
         tgi = curTgi + 1;
     }
 
-    return matches;
+    return buildMatchResult(matches, target, qGraphemes);
+}
+
+export function matchLiteral(literal: string, target: Target): MatchResult | null {
+    if (literal === "") {
+        return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, initialConsonantOnly: false };
+    }
+    const text = literal.toLowerCase();
+    const foundAt = target.normalizedInput.indexOf(text);
+    if (foundAt < 0) return null;
+
+    const indices: number[] = [];
+    const graphemeIndexes = target.graphemeIndexes;
+    for (let i = 0; i < text.length; i++) {
+        const gi = graphemeIndexes[foundAt + i];
+        if (indices[indices.length - 1] !== gi) {
+            indices.push(gi);
+        }
+    }
+    return buildMatchResult(indices, target, []);
 }
