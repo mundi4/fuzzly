@@ -12,6 +12,7 @@ export interface QueryGrapheme {
 export interface Query {
     input: string;
     graphemes: QueryGrapheme[];
+    atoms: string; // 전체 atom 시퀀스 연결 (세션 prefix 체크용)
 }
 
 export interface TargetGrapheme {
@@ -35,6 +36,7 @@ export type MatchResult = {
     runCount: number;
     boundaryHits: number;
     initialConsonantOnly: boolean;
+    score?: number; // DP가 계산한 최적 스코어
 };
 
 export type MatchRange = {

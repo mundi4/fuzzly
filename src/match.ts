@@ -1,4 +1,5 @@
-import type { MatchResult, Query, QueryGrapheme, Target } from "./types";
+import { SCORING } from "./score";
+import type { MatchResult, Query, QueryGrapheme, Target, TargetGrapheme } from "./types";
 
 /*
  * 매칭 모델
@@ -202,4 +203,336 @@ export function matchLiteral(literal: string, target: Target): MatchResult | nul
         }
     }
     return buildMatchResult(indices, target, []);
+}
+
+// ---------------------------------------------------------------------------
+// matchBest: DP 기반 최적 정렬 탐색
+// ---------------------------------------------------------------------------
+
+type Candidate = {
+    startTgi: number; // 이 쿼리 grapheme이 소비하는 첫 타겟 grapheme
+    endTgi: number; // 마지막으로 소비하는 타겟 grapheme (inclusive)
+    indices: number[]; // 소비한 모든 타겟 grapheme 인덱스
+};
+
+// 모음 있는 쿼리 grapheme의 모든 anchor 위치 수집
+function findVowelCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+    const qAtoms = qg.atoms;
+    const qTailStart = qg.tailIndex;
+    const qLeadVowelEnd = qTailStart === -1 ? qAtoms.length : qTailStart;
+    const candidates: Candidate[] = [];
+
+    for (let tgi = minTgi; tgi < tGraphemes.length; tgi++) {
+        const tg = tGraphemes[tgi];
+        if (tg.vowelIndex === -1) continue;
+        const tAtoms = tg.atoms;
+        if (tAtoms.length < qLeadVowelEnd) continue;
+
+        let ok = true;
+        for (let i = 0; i < qLeadVowelEnd; i++) {
+            if (qAtoms[i] !== tAtoms[i]) {
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) continue;
+
+        // anchor 발견
+        if (qTailStart === -1) {
+            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi] });
+            continue;
+        }
+
+        // 종성 매칭: anchor의 종성부터 시작, 이후 음절로 확장 가능
+        const tailResult = matchTailFrom(qg, tGraphemes, tgi, qLeadVowelEnd);
+        if (tailResult) {
+            candidates.push(tailResult);
+        }
+    }
+    return candidates;
+}
+
+// 종성 atom들을 anchor부터 이후 음절로 매칭 시도
+function matchTailFrom(
+    qg: QueryGrapheme,
+    tGraphemes: TargetGrapheme[],
+    anchorTgi: number,
+    searchStartAtomIdx: number,
+): Candidate | null {
+    const qAtoms = qg.atoms;
+    const qTailStart = qg.tailIndex;
+    const indices = [anchorTgi];
+    let curTgi = anchorTgi;
+    let tai = searchStartAtomIdx;
+    let lastMatchedTgi = anchorTgi;
+
+    for (let qai = qTailStart; qai < qAtoms.length; qai++) {
+        const needle = qAtoms[qai];
+        let found = false;
+
+        while (curTgi < tGraphemes.length) {
+            const tAtoms = tGraphemes[curTgi].atoms;
+            let idx = -1;
+            for (let i = tai; i < tAtoms.length; i++) {
+                if (tAtoms[i] === needle) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx !== -1) {
+                tai = idx + 1;
+                if (curTgi !== lastMatchedTgi) {
+                    indices.push(curTgi);
+                    lastMatchedTgi = curTgi;
+                }
+                found = true;
+                break;
+            }
+            curTgi++;
+            tai = 0;
+        }
+
+        if (!found) return null;
+    }
+
+    return { startTgi: anchorTgi, endTgi: lastMatchedTgi, indices };
+}
+
+// 초성 전용 한글 클러스터의 모든 시작 위치 수집
+function findConsonantCandidates(qAtoms: string, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+    const candidates: Candidate[] = [];
+
+    for (let startTgi = minTgi; startTgi < tGraphemes.length; startTgi++) {
+        if (tGraphemes[startTgi].atoms[0] !== qAtoms[0]) continue;
+
+        if (qAtoms.length === 1) {
+            candidates.push({ startTgi, endTgi: startTgi, indices: [startTgi] });
+            continue;
+        }
+
+        // 여러 atom: 각각 이후 타겟 음절의 lead와 순서대로 매치
+        const indices = [startTgi];
+        let curTgi = startTgi + 1;
+        let ok = true;
+        for (let qai = 1; qai < qAtoms.length; qai++) {
+            const needle = qAtoms[qai];
+            let found = false;
+            while (curTgi < tGraphemes.length) {
+                if (tGraphemes[curTgi].atoms[0] === needle) {
+                    indices.push(curTgi);
+                    curTgi++;
+                    found = true;
+                    break;
+                }
+                curTgi++;
+            }
+            if (!found) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) {
+            candidates.push({ startTgi, endTgi: indices[indices.length - 1], indices });
+        }
+    }
+    return candidates;
+}
+
+// 비한글 grapheme의 모든 정확 매치 위치 수집
+function findExactCandidates(qAtoms: string, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+    const candidates: Candidate[] = [];
+    for (let tgi = minTgi; tgi < tGraphemes.length; tgi++) {
+        if (tGraphemes[tgi].atoms === qAtoms) {
+            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi] });
+        }
+    }
+    return candidates;
+}
+
+// 쿼리 grapheme 종류에 따라 후보 수집 디스패치
+function findCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+    if (qg.vowelIndex !== -1) {
+        return findVowelCandidates(qg, tGraphemes, minTgi);
+    }
+    const firstCode = qg.atoms.charCodeAt(0);
+    const isHangulCluster = firstCode >= 0x3131 && firstCode <= 0x3163;
+    if (isHangulCluster) {
+        return findConsonantCandidates(qg.atoms, tGraphemes, minTgi);
+    }
+    return findExactCandidates(qg.atoms, tGraphemes, minTgi);
+}
+
+// 후보의 위치 점수 (경계 보너스, 위치 0 보너스)
+function candidatePositionScore(c: Candidate, target: Target): number {
+    let s = 0;
+    for (const tgi of c.indices) {
+        if (tgi === 0) s += SCORING.POSITION_ZERO;
+        else if (target.boundaryFlags[tgi]) s += SCORING.BOUNDARY;
+    }
+    return s;
+}
+
+// 전이 점수 (연속 보너스 or 갭 페널티)
+function transitionScore(prevEndTgi: number, currStartTgi: number): number {
+    if (currStartTgi === prevEndTgi + 1) {
+        return SCORING.CONSECUTIVE;
+    }
+    return SCORING.GAP_PENALTY * (currStartTgi - prevEndTgi - 1);
+}
+
+export function matchBest(query: Query, target: Target): MatchResult | null {
+    const qGraphemes = query.graphemes;
+    const tGraphemes = target.graphemes;
+    const Q = qGraphemes.length;
+
+    if (Q === 0) {
+        return {
+            indices: [],
+            startsAtZero: false,
+            runCount: 0,
+            boundaryHits: 0,
+            initialConsonantOnly: false,
+            score: 0,
+        };
+    }
+    if (Q > tGraphemes.length) return null;
+
+    // Phase 1: 각 쿼리 grapheme에 대해 모든 유효 후보 수집
+    const allCandidates: Candidate[][] = [];
+    for (let qi = 0; qi < Q; qi++) {
+        const candidates = findCandidates(qGraphemes[qi], tGraphemes, 0);
+        if (candidates.length === 0) return null;
+        allCandidates.push(candidates);
+    }
+
+    // Phase 2: DP — dp[qi][ci] = qi번째 쿼리 grapheme에 ci번째 후보를 사용할 때 최대 스코어
+    const dpScores: number[][] = [];
+    const dpParents: number[][] = [];
+
+    // qi = 0 초기화
+    const firstScores: number[] = [];
+    const firstParents: number[] = [];
+    for (let ci = 0; ci < allCandidates[0].length; ci++) {
+        firstScores.push(candidatePositionScore(allCandidates[0][ci], target));
+        firstParents.push(-1);
+    }
+    dpScores.push(firstScores);
+    dpParents.push(firstParents);
+
+    for (let qi = 1; qi < Q; qi++) {
+        const currCandidates = allCandidates[qi];
+        const prevCandidates = allCandidates[qi - 1];
+        const currScores: number[] = [];
+        const currParent: number[] = [];
+
+        for (let ci = 0; ci < currCandidates.length; ci++) {
+            const cc = currCandidates[ci];
+            let bestScore = -Infinity;
+            let bestPredIdx = -1;
+
+            for (let pci = 0; pci < prevCandidates.length; pci++) {
+                const pc = prevCandidates[pci];
+                if (pc.endTgi >= cc.startTgi) continue; // 단조 증가 위반
+
+                const prevScore = dpScores[qi - 1][pci];
+                if (prevScore === -Infinity) continue;
+
+                const trans = transitionScore(pc.endTgi, cc.startTgi);
+                const total = prevScore + trans;
+                if (total > bestScore) {
+                    bestScore = total;
+                    bestPredIdx = pci;
+                }
+            }
+
+            if (bestPredIdx === -1) {
+                currScores.push(-Infinity);
+                currParent.push(-1);
+            } else {
+                currScores.push(bestScore + candidatePositionScore(cc, target));
+                currParent.push(bestPredIdx);
+            }
+        }
+
+        dpScores.push(currScores);
+        dpParents.push(currParent);
+    }
+
+    // Phase 3: 최적 종점 찾기
+    const lastScores = dpScores[Q - 1];
+    let bestFinalScore = -Infinity;
+    let bestFinalIdx = -1;
+    for (let ci = 0; ci < lastScores.length; ci++) {
+        if (lastScores[ci] > bestFinalScore) {
+            bestFinalScore = lastScores[ci];
+            bestFinalIdx = ci;
+        }
+    }
+
+    if (bestFinalIdx === -1 || bestFinalScore === -Infinity) return null;
+
+    // Phase 4: 백트래킹 — 최적 경로 복원
+    const chosen: number[] = new Array(Q);
+    chosen[Q - 1] = bestFinalIdx;
+    for (let qi = Q - 2; qi >= 0; qi--) {
+        chosen[qi] = dpParents[qi + 1][chosen[qi + 1]];
+    }
+
+    // 모든 매칭 인덱스 수집
+    const allIndices: number[] = [];
+    for (let qi = 0; qi < Q; qi++) {
+        const candidate = allCandidates[qi][chosen[qi]];
+        for (const idx of candidate.indices) {
+            allIndices.push(idx);
+        }
+    }
+
+    // dedup (종성 확장으로 인접 후보가 같은 인덱스 포함할 수 있음)
+    const indices: number[] = [];
+    for (const idx of allIndices) {
+        if (indices.length === 0 || indices[indices.length - 1] !== idx) {
+            indices.push(idx);
+        }
+    }
+
+    // Phase 5: 전역 보정으로 최종 스코어 계산
+    let score = bestFinalScore;
+
+    // prefix 보너스: 위치 0부터 연속 매치
+    if (indices.length > 0 && indices[0] === 0) {
+        let isPrefix = true;
+        for (let i = 1; i < indices.length; i++) {
+            if (indices[i] !== indices[i - 1] + 1 && indices[i] !== indices[i - 1]) {
+                isPrefix = false;
+                break;
+            }
+        }
+        if (isPrefix) score += SCORING.PREFIX_BONUS;
+    }
+
+    // exact 보너스: 타겟의 모든 grapheme을 빠짐없이 커버 (0..len-1 연속)
+    if (
+        indices.length === tGraphemes.length &&
+        indices[0] === 0 &&
+        indices[indices.length - 1] === tGraphemes.length - 1
+    ) {
+        score += SCORING.EXACT_BONUS;
+    }
+
+    // 초성 전용 페널티
+    let initialConsonantOnly = Q > 0;
+    for (const qg of qGraphemes) {
+        if (qg.vowelIndex !== -1) {
+            initialConsonantOnly = false;
+            break;
+        }
+    }
+    if (initialConsonantOnly) score += SCORING.INITIAL_CONSONANT_PENALTY;
+
+    // 타겟 길이 페널티 (짧은 타겟 선호)
+    score += SCORING.TARGET_LENGTH_PENALTY * tGraphemes.length;
+
+    const result = buildMatchResult(indices, target, qGraphemes);
+    result.score = score;
+    return result;
 }

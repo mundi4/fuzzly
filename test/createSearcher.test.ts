@@ -134,10 +134,21 @@ describe("createSearcher", () => {
             }
         });
 
-        it("score 없으면 입력 순서 유지", () => {
+        it("DP score가 항상 계산됨", () => {
             const searcher = createSearcher(["aaa", "aab", "aac"]);
             const results = searcher.search("a");
-            expect(results.map((r) => r.item)).toEqual(["aaa", "aab", "aac"]);
+            expect(results).toHaveLength(3);
+            for (const r of results) {
+                expect(typeof r.score).toBe("number");
+            }
+        });
+
+        it("score 기반 정렬: 짧은 타겟이 더 높은 점수", () => {
+            const searcher = createSearcher(["안녕하세요", "안녕"]);
+            const results = searcher.search("안");
+            expect(results).toHaveLength(2);
+            expect(results[0].item).toBe("안녕");
+            expect(results[0].score!).toBeGreaterThan(results[1].score!);
         });
     });
 
