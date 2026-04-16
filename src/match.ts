@@ -1,5 +1,6 @@
-import { SCORING } from "./score";
-import type { MatchResult, Query, QueryGrapheme, Target, TargetGrapheme } from "./types";
+import type { ResolvedScoring } from "./score";
+import { resolveScoring } from "./score";
+import type { MatchResult, Query, QueryGrapheme, ScoringConfig, Target, TargetGrapheme } from "./types";
 
 /*
  * 매칭 모델
@@ -362,17 +363,18 @@ function findCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], minTgi:
     return findExactCandidates(qg.atoms, tGraphemes, minTgi);
 }
 
-// 후보의 위치 점수 (경계 보너스, 위치 0 보너스)
-function candidatePositionScore(c: Candidate, target: Target): number {
+// 후보의 위치 점수 (경계 보너스, 위치 0 보너스, per-grapheme bonus)
+function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring): number {
     let s = 0;
     for (const tgi of c.indices) {
-        if (tgi === 0) s += SCORING.POSITION_ZERO;
-        else if (target.boundaryFlags[tgi]) s += SCORING.BOUNDARY;
+        if (tgi === 0) s += sc.positionZero;
+        else if (target.boundaryFlags[tgi]) s += sc.boundary;
+        s += sc.getBonus(tgi);
     }
     return s;
 }
 
-export function matchBest(query: Query, target: Target): MatchResult | null {
+export function matchBest(query: Query, target: Target, scoring?: ScoringConfig): MatchResult | null {
     const qGraphemes = query.graphemes;
     const tGraphemes = target.graphemes;
     const Q = qGraphemes.length;
@@ -388,6 +390,8 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
         };
     }
     if (Q > tGraphemes.length) return null;
+
+    const sc = resolveScoring(scoring, target);
 
     // Phase 1: 각 쿼리 grapheme에 대해 모든 유효 후보 수집
     const allCandidates: Candidate[][] = [];
@@ -406,7 +410,7 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
     const firstScores: number[] = [];
     const firstParents: number[] = [];
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
-        firstScores.push(candidatePositionScore(allCandidates[0][ci], target));
+        firstScores.push(candidatePositionScore(allCandidates[0][ci], target, sc));
         firstParents.push(-1);
     }
     dpScores.push(firstScores);
@@ -425,14 +429,14 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
             const s = prevScoresArr[pci];
             if (s === -Infinity) continue;
             const e = prevCands[pci].endTgi;
-            preds.push({ endTgi: e, score: s, gapVal: s - SCORING.GAP_PENALTY * e, pci });
+            preds.push({ endTgi: e, score: s, gapVal: s - sc.gapPenalty * e, pci });
         }
         preds.sort((a, b) => a.endTgi - b.endTgi);
 
         // consecutive lookup: endTgi → 해당 endTgi에서 최대 (score + CONSECUTIVE, pci)
         const consMap = new Map<number, { total: number; pci: number }>();
         for (const p of preds) {
-            const total = p.score + SCORING.CONSECUTIVE;
+            const total = p.score + sc.consecutive;
             const existing = consMap.get(p.endTgi);
             if (!existing || total > existing.total) {
                 consMap.set(p.endTgi, { total, pci: p.pci });
@@ -459,7 +463,7 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
                 }
             }
             if (gapBestVal > -Infinity) {
-                const gapTotal = gapBestVal + SCORING.GAP_PENALTY * (s - 1);
+                const gapTotal = gapBestVal + sc.gapPenalty * (s - 1);
                 bestScore = gapTotal;
                 bestPredIdx = gapBestPci;
             }
@@ -475,7 +479,7 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
                 currScores.push(-Infinity);
                 currParent.push(-1);
             } else {
-                currScores.push(bestScore + candidatePositionScore(currCandidates[ci], target));
+                currScores.push(bestScore + candidatePositionScore(currCandidates[ci], target, sc));
                 currParent.push(bestPredIdx);
             }
         }
@@ -533,7 +537,7 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
                 break;
             }
         }
-        if (isPrefix) score += SCORING.PREFIX_BONUS;
+        if (isPrefix) score += sc.prefixBonus;
     }
 
     // exact 보너스: 타겟의 모든 grapheme을 빠짐없이 커버 (0..len-1 연속)
@@ -542,7 +546,7 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
         indices[0] === 0 &&
         indices[indices.length - 1] === tGraphemes.length - 1
     ) {
-        score += SCORING.EXACT_BONUS;
+        score += sc.exactBonus;
     }
 
     // 초성 전용 페널티
@@ -553,10 +557,10 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
             break;
         }
     }
-    if (initialConsonantOnly) score += SCORING.INITIAL_CONSONANT_PENALTY;
+    if (initialConsonantOnly) score += sc.initialConsonantPenalty;
 
     // 타겟 길이 페널티 (짧은 타겟 선호)
-    score += SCORING.TARGET_LENGTH_PENALTY * tGraphemes.length;
+    score += sc.targetLengthPenalty * tGraphemes.length;
 
     const result = buildMatchResult(indices, target, qGraphemes);
     result.score = score;

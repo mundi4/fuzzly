@@ -3,7 +3,7 @@ export { buildQuery } from "./buildQuery";
 export { createSearcher } from "./createSearcher";
 export { match, matchBest, matchLiteral } from "./match";
 export { preprocessTarget } from "./preprocessTarget";
-export { defaultScore, SCORING } from "./score";
+export { createGraphemeBonuses, defaultScore, SCORING } from "./score";
 export type {
     Atoms,
     GraphemeIndices,
@@ -11,6 +11,8 @@ export type {
     MatchResult,
     Query,
     QueryGrapheme,
+    ScoringConfig,
+    ScoringWeights,
     Searcher,
     SearcherOptions,
     SearchOptions,

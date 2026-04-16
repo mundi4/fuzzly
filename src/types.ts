@@ -44,6 +44,30 @@ export type MatchRange = {
     end: number;
 };
 
+/** DP 스코어링 가중치. 생략된 필드는 SCORING 기본값 사용. */
+export type ScoringWeights = {
+    positionZero?: number;
+    boundary?: number;
+    consecutive?: number;
+    gapPenalty?: number;
+    prefixBonus?: number;
+    exactBonus?: number;
+    initialConsonantPenalty?: number;
+    targetLengthPenalty?: number;
+};
+
+/** matchBest DP에 전달되는 스코어링 설정 */
+export type ScoringConfig = {
+    /** 기본 SCORING 상수 오버라이드 */
+    weights?: ScoringWeights;
+    /**
+     * Per-grapheme bonus. 매치된 각 타겟 그래핌에 대해 추가 점수.
+     * - number[]: graphemeIndex로 인덱싱. 길이 부족 시 0 취급.
+     * - function: (graphemeIndex, target) => bonus 점수.
+     */
+    graphemeBonus?: number[] | ((graphemeIndex: number, target: Target) => number);
+};
+
 export type SearcherOptions<T = string> = {
     key?: (item: T) => string;
 };
@@ -51,7 +75,9 @@ export type SearcherOptions<T = string> = {
 export type SearchOptions = {
     limit?: number;
     literal?: boolean;
-    score?: (result: MatchResult) => number;
+    score?: (result: MatchResult, target: Target) => number;
+    /** DP 스코어링 설정. 함수 형태면 타겟마다 호출. */
+    scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
 };
 
 export type SearchResult<T = string> = {
