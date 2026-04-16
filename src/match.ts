@@ -46,6 +46,13 @@ function buildMatchResult(indices: number[], target: Target, queryGraphemes: Que
     return { indices, startsAtZero, runCount, boundaryHits, initialConsonantOnly };
 }
 
+/**
+ * 탐욕적(greedy) 좌→우 매칭. 첫 번째로 유효한 정렬을 반환한다.
+ * 스코어 계산 없이 매칭 여부와 기본 메타데이터만 필요할 때 사용.
+ * 스코어 기반 최적 정렬이 필요하면 `matchBest`를 사용할 것.
+ *
+ * @returns 매칭 결과 (score 필드 없음), 매칭 실패 시 null
+ */
 export function match(query: Query, target: Target): MatchResult | null {
     const qGraphemes = query.graphemes;
     const tGraphemes = target.graphemes;
@@ -187,6 +194,13 @@ export function match(query: Query, target: Target): MatchResult | null {
     return buildMatchResult(matches, target, qGraphemes);
 }
 
+/**
+ * 리터럴 substring 매칭 (대소문자 무시).
+ * `target.normalizedInput`에서 `indexOf`로 찾은 뒤 grapheme 인덱스로 변환한다.
+ *
+ * @param literal - 검색할 문자열 (따옴표 없이)
+ * @returns 매칭 결과 (score 필드 없음), 매칭 실패 시 null
+ */
 export function matchLiteral(literal: string, target: Target): MatchResult | null {
     if (literal === "") {
         return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, initialConsonantOnly: false };
@@ -374,6 +388,17 @@ function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScorin
     return s;
 }
 
+/**
+ * DP 기반 최적 정렬 매칭. 모든 유효 후보를 수집한 뒤 동적 프로그래밍으로
+ * 위치 보너스, 연속 보너스, gap 페널티를 고려한 최적 경로를 선택한다.
+ * 결과의 `score` 필드에 최종 스코어가 설정된다.
+ *
+ * `scoring` 파라미터로 SCORING 상수 오버라이드 및 per-grapheme 가중치를 적용할 수 있다.
+ * graphemeBonus는 candidatePositionScore에 가산되므로 gap sweep/consecutive 최적화와 충돌 없음.
+ *
+ * @param scoring - 스코어링 커스터마이징 설정 (생략 시 SCORING 기본값 사용)
+ * @returns 최적 정렬의 매칭 결과 (score 포함), 매칭 실패 시 null
+ */
 export function matchBest(query: Query, target: Target, scoring?: ScoringConfig): MatchResult | null {
     const qGraphemes = query.graphemes;
     const tGraphemes = target.graphemes;

@@ -1,14 +1,23 @@
 import type { MatchResult, ScoringConfig, Target } from "./types";
 
+/**
+ * `matchBest` DP 스코어링의 기본 가중치 상수.
+ * `ScoringConfig.weights`로 개별 오버라이드 가능.
+ *
+ * 스코어 구성:
+ * - 후보 선택 시: POSITION_ZERO, BOUNDARY, graphemeBonus (candidatePositionScore)
+ * - DP 전이 시: CONSECUTIVE (연속 보너스), GAP_PENALTY (gap 페널티)
+ * - 최종 보정: PREFIX_BONUS, EXACT_BONUS, INITIAL_CONSONANT_PENALTY, TARGET_LENGTH_PENALTY
+ */
 export const SCORING = {
-    POSITION_ZERO: 100, // 타겟 위치 0에서 매치
-    BOUNDARY: 50, // 단어 경계(공백/밑줄/대시/점 뒤)에서 매치
-    CONSECUTIVE: 20, // 연속 매치 보너스 (누적: 20, 40, 60...)
-    GAP_PENALTY: -3, // 스킵된 타겟 그래핌당 페널티
-    PREFIX_BONUS: 200, // 타겟 시작부터 연속 매치 (완벽 prefix)
-    EXACT_BONUS: 500, // 쿼리 == 타겟 (완전 일치)
-    INITIAL_CONSONANT_PENALTY: -30, // 초성만 쿼리
-    TARGET_LENGTH_PENALTY: -1, // 타겟 그래핌 수당 페널티 (짧은 타겟 선호)
+    POSITION_ZERO: 100,
+    BOUNDARY: 50,
+    CONSECUTIVE: 20,
+    GAP_PENALTY: -3,
+    PREFIX_BONUS: 200,
+    EXACT_BONUS: 500,
+    INITIAL_CONSONANT_PENALTY: -30,
+    TARGET_LENGTH_PENALTY: -1,
 } as const;
 
 export type ResolvedScoring = {
@@ -50,8 +59,24 @@ export function resolveScoring(config: ScoringConfig | undefined, target: Target
 }
 
 /**
- * 타겟의 문자 범위 [start, end)에 해당하는 그래핌에 bonus를 부여하는
- * graphemeBonus 배열 생성. 여러 범위가 겹치면 bonus가 누적된다.
+ * 타겟의 UTF-16 문자 범위 [start, end)를 grapheme 인덱스로 변환하여
+ * `ScoringConfig.graphemeBonus`에 사용할 수 있는 배열을 생성한다.
+ * 여러 범위가 겹치면 bonus가 누적된다.
+ *
+ * 반환 배열의 길이는 `target.graphemes.length`와 같고,
+ * 범위에 속하지 않는 grapheme의 값은 0이다.
+ *
+ * @param target - `preprocessTarget`으로 생성한 타겟
+ * @param ranges - 각 원소의 start/end는 원문 UTF-16 offset (end exclusive), bonus는 가산할 점수
+ * @returns `graphemeBonus`로 바로 사용 가능한 number 배열
+ *
+ * @example
+ * ```ts
+ * const target = preprocessTarget("프로젝트 설정 파일");
+ * // "설정" 부분(char offset 5~7)에 100점 가중치
+ * const bonuses = createGraphemeBonuses(target, [{ start: 5, end: 7, bonus: 100 }]);
+ * matchBest(query, target, { graphemeBonus: bonuses });
+ * ```
  */
 export function createGraphemeBonuses(
     target: Target,
@@ -71,6 +96,11 @@ export function createGraphemeBonuses(
     return bonuses;
 }
 
+/**
+ * `matchBest`를 사용하지 않을 때의 간이 스코어링 함수.
+ * `match`의 MatchResult 메타데이터만으로 점수를 계산한다.
+ * `SearchOptions.score`에 전달하거나 직접 호출할 수 있다.
+ */
 export function defaultScore(result: MatchResult): number {
     let s = 0;
     if (result.startsAtZero) s += 1000;

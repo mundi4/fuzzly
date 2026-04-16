@@ -1,11 +1,12 @@
 import type { GraphemeIndices, MatchRange, Target } from "./types";
 
 /**
- * hitMaps과 Target을 받아서 MatchRange[]로 변환
+ * 매칭된 grapheme 인덱스 배열들을 원문 문자열의 하이라이트 범위(UTF-16 offset)로 변환한다.
+ * 연속된 grapheme 인덱스는 하나의 범위로 합쳐진다.
  *
- * 과정:
- * 1. 모든 indices 수집 + 정렬
- * 2. dedup과 range 변환을 한 번의 loop에서 처리
+ * @param hitMaps - `MatchResult.indices` 배열 하나 이상. 여러 sub-query 결과를 합칠 때 사용.
+ * @param target - `preprocessTarget`으로 생성한 타겟 (charIndexes 사용)
+ * @returns 정렬된 MatchRange 배열 (UI 하이라이팅에 사용)
  */
 export function buildMatchRanges(hitMaps: GraphemeIndices[], target: Target): MatchRange[] {
     // 모든 indices 수집
