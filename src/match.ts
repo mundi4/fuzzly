@@ -510,8 +510,8 @@ export function matchBest(query: Query, target: Target): MatchResult | null {
         if (isPrefix) score += SCORING.PREFIX_BONUS;
     }
 
-    // exact 보너스: 전체 타겟을 커버
-    if (indices.length > 0 && indices[0] === 0 && indices[indices.length - 1] === tGraphemes.length - 1) {
+    // exact 보너스: 타겟의 모든 grapheme을 빠짐없이 커버 (0..len-1 연속)
+    if (indices.length === tGraphemes.length && indices[0] === 0 && indices[indices.length - 1] === tGraphemes.length - 1) {
         score += SCORING.EXACT_BONUS;
     }
 
