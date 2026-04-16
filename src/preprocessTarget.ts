@@ -2,6 +2,13 @@ import segmenter from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
 import type { Target, TargetGrapheme } from "./types";
 
+/**
+ * 검색 대상 문자열을 grapheme 단위로 분해하고 인덱스/경계 메타데이터를 계산한다.
+ * 결과 Target 객체는 한 번 생성해두고 여러 쿼리에 대해 재사용하는 것이 의도된 패턴.
+ *
+ * @param input - 검색 대상 원문 문자열
+ * @returns 전처리된 Target 객체 (`match`, `matchBest`의 두 번째 인자로 사용)
+ */
 export function preprocessTarget(input: string): Target {
     const graphemes: TargetGrapheme[] = [];
     const graphemeIndexes: number[] = [];

@@ -37,6 +37,17 @@ function heapReplace<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * 검색 인스턴스를 생성한다. 아이템 목록을 내부에 보관하고
+ * `search()` 호출마다 `matchBest`로 최적 매칭+스코어링을 수행한다.
+ *
+ * IME 입력 시 세션 최적화: 이전 쿼리의 atom prefix 확장이면
+ * 이전에 매치된 아이템만 재검색하여 성능을 높인다.
+ *
+ * @param items - 검색 대상 아이템 목록
+ * @param options - T가 string이 아니면 `key` 함수 필수
+ * @returns add/remove/replaceAll로 아이템을 관리할 수 있는 Searcher 인스턴스
+ */
 export function createSearcher<T>(
     items: readonly T[],
     options: SearcherOptions<T> & { key: (item: T) => string },
@@ -73,6 +84,9 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         search(queryInput: string, searchOpts: SearchOptions = {}): SearchResult<T>[] {
             const scoreFn = searchOpts.score;
             const limit = searchOpts.limit ?? 0;
+            const scoringOpt = searchOpts.scoring;
+            const resolveScoringConfig =
+                typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
 
             // 세션 연속 판단을 위한 atom 시퀀스
             const query = searchOpts.literal ? null : buildQuery(queryInput);
@@ -101,21 +115,22 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 const scan = sessionIndices ?? iota(entries.length);
 
                 for (const i of scan) {
+                    const t = entries[i].target;
                     const result = query
-                        ? matchBest(query, entries[i].target)
-                        : matchLiteral(queryInput, entries[i].target);
+                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined)
+                        : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
                     matchedIndices.push(i);
-                    const score = scoreFn ? scoreFn(result) : (result.score ?? 0);
+                    const score = scoreFn ? scoreFn(result, t) : (result.score ?? 0);
 
                     if (heap.length < limit) {
-                        const sr = makeSearchResult(entries[i].item, entries[i].target, result);
+                        const sr = makeSearchResult(entries[i].item, t, result);
                         sr.score = score;
                         heapPush(heap, sr);
                         if (heap.length === limit) minScore = heap[0].score ?? 0;
                     } else if (score > minScore) {
-                        const sr = makeSearchResult(entries[i].item, entries[i].target, result);
+                        const sr = makeSearchResult(entries[i].item, t, result);
                         sr.score = score;
                         heapReplace(heap, sr);
                         minScore = heap[0].score ?? 0;
@@ -129,14 +144,15 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 const scan = sessionIndices ?? iota(entries.length);
 
                 for (const i of scan) {
+                    const t = entries[i].target;
                     const result = query
-                        ? matchBest(query, entries[i].target)
-                        : matchLiteral(queryInput, entries[i].target);
+                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined)
+                        : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
                     matchedIndices.push(i);
-                    const sr = makeSearchResult(entries[i].item, entries[i].target, result);
-                    sr.score = scoreFn ? scoreFn(result) : (result.score ?? 0);
+                    const sr = makeSearchResult(entries[i].item, t, result);
+                    sr.score = scoreFn ? scoreFn(result, t) : (result.score ?? 0);
                     results.push(sr);
                 }
 
