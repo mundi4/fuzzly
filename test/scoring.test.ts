@@ -245,7 +245,7 @@ describe("createSearcher - scoring option", () => {
         const results = searcher.search("가", {
             scoring: (target) => ({
                 // 짧은 타겟에 grapheme bonus
-                graphemeBonus: (gi) => (target.graphemes.length <= 4 && gi === 0 ? 200 : 0),
+                graphemeBonus: (gi) => (target.graphemeCount <= 4 && gi === 0 ? 200 : 0),
             }),
         });
         expect(results.length).toBeGreaterThan(0);

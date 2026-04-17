@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildQuery } from "../src/index";
+import { atomIdToChar } from "../src/internal/atomRegistry";
+
+function atomsToStr(atoms: Uint8Array): string {
+    let s = "";
+    for (let i = 0; i < atoms.length; i++) s += atomIdToChar(atoms[i]);
+    return s;
+}
 
 describe("buildQuery - 유닛 테스트", () => {
     describe("기본 기능", () => {
@@ -79,14 +86,14 @@ describe("buildQuery - 유닛 테스트", () => {
         it("대문자 입력은 소문자로 정규화", () => {
             const query = buildQuery("ABC");
             expect(query).not.toBeNull();
-            expect(query.graphemes[0].atoms).toBe("a");
+            expect(atomsToStr(query.graphemes[0].atoms)).toBe("a");
         });
 
         it("혼합 대소문자도 소문자로 정규화", () => {
             const query = buildQuery("AbC");
-            expect(query.graphemes[0].atoms).toBe("a");
-            expect(query.graphemes[1].atoms).toBe("b");
-            expect(query.graphemes[2].atoms).toBe("c");
+            expect(atomsToStr(query.graphemes[0].atoms)).toBe("a");
+            expect(atomsToStr(query.graphemes[1].atoms)).toBe("b");
+            expect(atomsToStr(query.graphemes[2].atoms)).toBe("c");
         });
 
         it("input 필드는 원본 유지", () => {
@@ -140,9 +147,9 @@ describe("buildQuery - 유닛 테스트", () => {
             expect(query.graphemes[0]).toHaveProperty("tailIndex");
         });
 
-        it("atoms는 문자열", () => {
+        it("atoms는 Uint8Array", () => {
             const query = buildQuery("안");
-            expect(typeof query.graphemes[0].atoms).toBe("string");
+            expect(query.graphemes[0].atoms).toBeInstanceOf(Uint8Array);
             expect(query.graphemes[0].atoms.length).toBe(3);
         });
     });

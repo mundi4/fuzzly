@@ -16,6 +16,7 @@
 //     시작 (Windows IME 동작)
 //   - lone vowel(ㅏ 등) 뒤에 뭐가 오면 무조건 finalize하고 새로 시작
 
+import { atomIdToChar } from "../src/internal/atomRegistry";
 import segmenter from "../src/internal/segmenter";
 import { decomposeToAtoms } from "../src/internal/utils";
 
@@ -250,7 +251,7 @@ export function queryToKeystrokes(finalQuery: string): string[] {
         if (cluster.length === 1) {
             const decomposed = decomposeToAtoms(cluster);
             for (let i = 0; i < decomposed.length; i++) {
-                atoms.push(decomposed[i]);
+                atoms.push(atomIdToChar(decomposed[i]));
             }
         } else {
             atoms.push(cluster);

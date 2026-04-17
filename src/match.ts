@@ -1,23 +1,17 @@
+import { isConsonantLUT } from "./internal/atomRegistry";
 import type { ResolvedScoring } from "./score";
 import { resolveScoring } from "./score";
-import type { MatchResult, Query, QueryGrapheme, ScoringConfig, Target, TargetGrapheme } from "./types";
+import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, Target } from "./types";
 
 /*
  * 매칭 모델
  * ---------
  * "spillover" 개념은 없다. 쿼리 원자를 타겟 원자 스트림에 순서대로 매칭시키는 게 전부다.
  * 유일한 제약은 **vowel-sticks-to-lead**: 쿼리 한 글자의 모음(중성)은 그 글자의 초성이
- * 매치된 타겟 음절 안에서 바로 이어지는 위치에서만 소비될 수 있다. 즉 초성 매치 위치에
- * "anchor"를 박고 중성을 같은 음절 내부에서만 끝내야 한다.
+ * 매치된 타겟 음절 안에서 바로 이어지는 위치에서만 소비될 수 있다.
  *
- * 자음(초성/종성)은 자유롭게 건너뛰며 다음 타겟 음절로 넘어갈 수 있다. 초성에 이어지는
- * 모음이 없는 경우(겹자음 단독 입력 or non-hangul)는 anchor가 없고 그냥 다음 매칭 atom을
- * 찾으면 끝난다.
- *
- * 타겟 원자는 초성(lead)/중성(vowel)/종성(tail) 위치 정보가 preprocessTarget에서 이미
- * 계산돼 있고, 쿼리의 초성(+중성) phase는 타겟 한 음절 안에서 atom-by-atom 비교로 해결된다.
- * 쿼리 종성 phase는 anchor 음절의 종성부터 시작해서 이후 음절들의 자음 자리로 자유롭게
- * 넘어갈 수 있다.
+ * Atoms = Uint8Array (정수 ID). 비교는 모두 정수 비교.
+ * Target은 flat typed array 레이아웃 (atomsFlat, atomStarts, atomLens, vowelIdxs, tailIdxs).
  */
 
 function buildMatchResult(indices: number[], target: Target, queryGraphemes: QueryGrapheme[]): MatchResult {
@@ -48,19 +42,15 @@ function buildMatchResult(indices: number[], target: Target, queryGraphemes: Que
 
 /**
  * 탐욕적(greedy) 좌→우 매칭. 첫 번째로 유효한 정렬을 반환한다.
- * 스코어 계산 없이 매칭 여부와 기본 메타데이터만 필요할 때 사용.
- * 스코어 기반 최적 정렬이 필요하면 `matchBest`를 사용할 것.
- *
- * @returns 매칭 결과 (score 필드 없음), 매칭 실패 시 null
  */
 export function match(query: Query, target: Target): MatchResult | null {
     const qGraphemes = query.graphemes;
-    const tGraphemes = target.graphemes;
+    const T = target.graphemeCount;
 
     if (qGraphemes.length === 0) {
         return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, initialConsonantOnly: false };
     }
-    if (qGraphemes.length > tGraphemes.length) return null;
+    if (qGraphemes.length > T) return null;
 
     const matches: number[] = [];
     let tgi = 0;
@@ -72,20 +62,16 @@ export function match(query: Query, target: Target): MatchResult | null {
         const qTailStart = qg.tailIndex;
 
         if (qVowelStart === -1) {
-            // 중성 없음. 두 종류로 갈린다:
-            //  (1) 한글 자음 원자(ㄱ, ㄳ 등): atoms의 각 char가 compat 자모이고,
-            //      각각이 이후 타겟 음절의 LEAD 자리와 매치돼야 한다.
-            //  (2) 비한글 grapheme(ASCII, 이모지 등): atoms 전체가 하나의 불가분
-            //      단위이므로 타겟 grapheme의 atoms와 통째로 같아야 한다.
-            const firstCode = qAtoms.charCodeAt(0);
-            const isHangulCluster = firstCode >= 0x3131 && firstCode <= 0x3163;
+            // 중성 없음
+            const isHangulCluster = isConsonantLUT[qAtoms[0]] === 1;
 
             if (isHangulCluster) {
+                // 한글 자음: 각 atom이 이후 타겟 음절의 초성(첫 atom)과 매치
                 for (let qai = 0; qai < qAtoms.length; qai++) {
                     const needle = qAtoms[qai];
                     let found = false;
-                    while (tgi < tGraphemes.length) {
-                        if (tGraphemes[tgi].atoms[0] === needle) {
+                    while (tgi < T) {
+                        if (target.atomsFlat[target.atomStarts[tgi]] === needle) {
                             matches.push(tgi);
                             tgi++;
                             found = true;
@@ -96,9 +82,10 @@ export function match(query: Query, target: Target): MatchResult | null {
                     if (!found) return null;
                 }
             } else {
+                // 비한글: atoms 전체가 동일해야 함
                 let found = false;
-                while (tgi < tGraphemes.length) {
-                    if (tGraphemes[tgi].atoms === qAtoms) {
+                while (tgi < T) {
+                    if (atomsEqual(qAtoms, target, tgi)) {
                         matches.push(tgi);
                         tgi++;
                         found = true;
@@ -111,27 +98,24 @@ export function match(query: Query, target: Target): MatchResult | null {
             continue;
         }
 
-        // 중성 있음: lead + vowel은 같은 타겟 음절 안에서 처리해야 한다.
+        // 중성 있음: lead + vowel은 같은 타겟 음절 안에서 처리
         const qLeadVowelEnd = qTailStart === -1 ? qAtoms.length : qTailStart;
 
-        // anchor 탐색: tGraphemes[tgi..] 중에서 qg의 lead+vowel atoms와 prefix-match
-        // 되는 첫 음절을 찾는다.
         let anchorTgi = -1;
-        while (tgi < tGraphemes.length) {
-            const tg = tGraphemes[tgi];
-            if (tg.vowelIndex === -1) {
-                // 타겟 자모가 한글 음절이 아님(공백, 비한글, 단독 자모 등) → 건너뜀
+        while (tgi < T) {
+            if (target.vowelIdxs[tgi] === -1) {
                 tgi++;
                 continue;
             }
-            const tAtoms = tg.atoms;
-            if (tAtoms.length < qLeadVowelEnd) {
+            const tStart = target.atomStarts[tgi];
+            const tLen = target.atomLens[tgi];
+            if (tLen < qLeadVowelEnd) {
                 tgi++;
                 continue;
             }
             let ok = true;
             for (let i = 0; i < qLeadVowelEnd; i++) {
-                if (qAtoms[i] !== tAtoms[i]) {
+                if (qAtoms[i] !== target.atomsFlat[tStart + i]) {
                     ok = false;
                     break;
                 }
@@ -153,21 +137,21 @@ export function match(query: Query, target: Target): MatchResult | null {
             continue;
         }
 
-        // 종성 처리: anchor의 종성부터 시작해 이후 음절의 자음 자리까지 건너뛰며 매칭.
-        // 자음은 vowel atom과 절대 같지 않으므로 vowel을 무심코 건너뛸 위험은 없다.
+        // 종성 처리
         let curTgi = anchorTgi;
-        let tai = qLeadVowelEnd;
+        let tai = target.atomStarts[anchorTgi] + qLeadVowelEnd;
         let lastMatchedTgi = anchorTgi;
 
         for (let qai = qTailStart; qai < qAtoms.length; qai++) {
             const needle = qAtoms[qai];
             let found = false;
 
-            while (curTgi < tGraphemes.length) {
-                const tAtoms = tGraphemes[curTgi].atoms;
+            while (curTgi < T) {
+                const tStart = target.atomStarts[curTgi];
+                const tEnd = tStart + target.atomLens[curTgi];
                 let idx = -1;
-                for (let i = tai; i < tAtoms.length; i++) {
-                    if (tAtoms[i] === needle) {
+                for (let i = tai; i < tEnd; i++) {
+                    if (target.atomsFlat[i] === needle) {
                         idx = i;
                         break;
                     }
@@ -182,7 +166,7 @@ export function match(query: Query, target: Target): MatchResult | null {
                     break;
                 }
                 curTgi++;
-                tai = 0;
+                tai = curTgi < T ? target.atomStarts[curTgi] : 0;
             }
 
             if (!found) return null;
@@ -196,10 +180,6 @@ export function match(query: Query, target: Target): MatchResult | null {
 
 /**
  * 리터럴 substring 매칭 (대소문자 무시).
- * `target.normalizedInput`에서 `indexOf`로 찾은 뒤 grapheme 인덱스로 변환한다.
- *
- * @param literal - 검색할 문자열 (따옴표 없이)
- * @returns 매칭 결과 (score 필드 없음), 매칭 실패 시 null
  */
 export function matchLiteral(literal: string, target: Target): MatchResult | null {
     if (literal === "") {
@@ -221,45 +201,57 @@ export function matchLiteral(literal: string, target: Target): MatchResult | nul
 }
 
 // ---------------------------------------------------------------------------
+// atomsEqual: 쿼리 grapheme의 atoms와 타겟 grapheme의 atoms 전체 비교
+// ---------------------------------------------------------------------------
+function atomsEqual(qAtoms: Atoms, target: Target, tgi: number): boolean {
+    const tLen = target.atomLens[tgi];
+    if (qAtoms.length !== tLen) return false;
+    const tStart = target.atomStarts[tgi];
+    for (let i = 0; i < tLen; i++) {
+        if (qAtoms[i] !== target.atomsFlat[tStart + i]) return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // matchBest: DP 기반 최적 정렬 탐색
 // ---------------------------------------------------------------------------
 
 type Candidate = {
-    startTgi: number; // 이 쿼리 grapheme이 소비하는 첫 타겟 grapheme
-    endTgi: number; // 마지막으로 소비하는 타겟 grapheme (inclusive)
-    indices: number[]; // 소비한 모든 타겟 grapheme 인덱스
+    startTgi: number;
+    endTgi: number;
+    indices: number[];
 };
 
 // 모음 있는 쿼리 grapheme의 모든 anchor 위치 수집
-function findVowelCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+function findVowelCandidates(qg: QueryGrapheme, target: Target, minTgi: number): Candidate[] {
     const qAtoms = qg.atoms;
     const qTailStart = qg.tailIndex;
     const qLeadVowelEnd = qTailStart === -1 ? qAtoms.length : qTailStart;
     const candidates: Candidate[] = [];
+    const T = target.graphemeCount;
 
-    for (let tgi = minTgi; tgi < tGraphemes.length; tgi++) {
-        const tg = tGraphemes[tgi];
-        if (tg.vowelIndex === -1) continue;
-        const tAtoms = tg.atoms;
-        if (tAtoms.length < qLeadVowelEnd) continue;
+    for (let tgi = minTgi; tgi < T; tgi++) {
+        if (target.vowelIdxs[tgi] === -1) continue;
+        const tStart = target.atomStarts[tgi];
+        const tLen = target.atomLens[tgi];
+        if (tLen < qLeadVowelEnd) continue;
 
         let ok = true;
         for (let i = 0; i < qLeadVowelEnd; i++) {
-            if (qAtoms[i] !== tAtoms[i]) {
+            if (qAtoms[i] !== target.atomsFlat[tStart + i]) {
                 ok = false;
                 break;
             }
         }
         if (!ok) continue;
 
-        // anchor 발견
         if (qTailStart === -1) {
             candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi] });
             continue;
         }
 
-        // 종성 매칭: anchor의 종성부터 시작, 이후 음절로 확장 가능
-        const tailResult = matchTailFrom(qg, tGraphemes, tgi, qLeadVowelEnd);
+        const tailResult = matchTailFrom(qg, target, tgi, tStart + qLeadVowelEnd);
         if (tailResult) {
             candidates.push(tailResult);
         }
@@ -270,26 +262,28 @@ function findVowelCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], mi
 // 종성 atom들을 anchor부터 이후 음절로 매칭 시도
 function matchTailFrom(
     qg: QueryGrapheme,
-    tGraphemes: TargetGrapheme[],
+    target: Target,
     anchorTgi: number,
-    searchStartAtomIdx: number,
+    searchStartFlat: number,
 ): Candidate | null {
     const qAtoms = qg.atoms;
     const qTailStart = qg.tailIndex;
     const indices = [anchorTgi];
     let curTgi = anchorTgi;
-    let tai = searchStartAtomIdx;
+    let tai = searchStartFlat;
     let lastMatchedTgi = anchorTgi;
+    const T = target.graphemeCount;
 
     for (let qai = qTailStart; qai < qAtoms.length; qai++) {
         const needle = qAtoms[qai];
         let found = false;
 
-        while (curTgi < tGraphemes.length) {
-            const tAtoms = tGraphemes[curTgi].atoms;
+        while (curTgi < T) {
+            const tStart = target.atomStarts[curTgi];
+            const tEnd = tStart + target.atomLens[curTgi];
             let idx = -1;
-            for (let i = tai; i < tAtoms.length; i++) {
-                if (tAtoms[i] === needle) {
+            for (let i = tai; i < tEnd; i++) {
+                if (target.atomsFlat[i] === needle) {
                     idx = i;
                     break;
                 }
@@ -304,7 +298,7 @@ function matchTailFrom(
                 break;
             }
             curTgi++;
-            tai = 0;
+            tai = curTgi < T ? target.atomStarts[curTgi] : 0;
         }
 
         if (!found) return null;
@@ -314,26 +308,26 @@ function matchTailFrom(
 }
 
 // 초성 전용 한글 클러스터의 모든 시작 위치 수집
-function findConsonantCandidates(qAtoms: string, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+function findConsonantCandidates(qAtoms: Atoms, target: Target, minTgi: number): Candidate[] {
     const candidates: Candidate[] = [];
+    const T = target.graphemeCount;
 
-    for (let startTgi = minTgi; startTgi < tGraphemes.length; startTgi++) {
-        if (tGraphemes[startTgi].atoms[0] !== qAtoms[0]) continue;
+    for (let startTgi = minTgi; startTgi < T; startTgi++) {
+        if (target.atomsFlat[target.atomStarts[startTgi]] !== qAtoms[0]) continue;
 
         if (qAtoms.length === 1) {
             candidates.push({ startTgi, endTgi: startTgi, indices: [startTgi] });
             continue;
         }
 
-        // 여러 atom: 각각 이후 타겟 음절의 lead와 순서대로 매치
         const indices = [startTgi];
         let curTgi = startTgi + 1;
         let ok = true;
         for (let qai = 1; qai < qAtoms.length; qai++) {
             const needle = qAtoms[qai];
             let found = false;
-            while (curTgi < tGraphemes.length) {
-                if (tGraphemes[curTgi].atoms[0] === needle) {
+            while (curTgi < T) {
+                if (target.atomsFlat[target.atomStarts[curTgi]] === needle) {
                     indices.push(curTgi);
                     curTgi++;
                     found = true;
@@ -354,40 +348,33 @@ function findConsonantCandidates(qAtoms: string, tGraphemes: TargetGrapheme[], m
 }
 
 // 비한글 grapheme의 모든 정확 매치 위치 수집
-function findExactCandidates(qAtoms: string, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+function findExactCandidates(qAtoms: Atoms, target: Target, minTgi: number): Candidate[] {
     const candidates: Candidate[] = [];
-    for (let tgi = minTgi; tgi < tGraphemes.length; tgi++) {
-        if (tGraphemes[tgi].atoms === qAtoms) {
+    const T = target.graphemeCount;
+    for (let tgi = minTgi; tgi < T; tgi++) {
+        if (atomsEqual(qAtoms, target, tgi)) {
             candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi] });
         }
     }
     return candidates;
 }
 
-// 쿼리 grapheme 종류에 따라 후보 수집 디스패치
-function findCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], minTgi: number): Candidate[] {
+function findCandidates(qg: QueryGrapheme, target: Target, minTgi: number): Candidate[] {
     if (qg.vowelIndex !== -1) {
-        return findVowelCandidates(qg, tGraphemes, minTgi);
+        return findVowelCandidates(qg, target, minTgi);
     }
-    const firstCode = qg.atoms.charCodeAt(0);
-    const isHangulCluster = firstCode >= 0x3131 && firstCode <= 0x3163;
-    if (isHangulCluster) {
-        return findConsonantCandidates(qg.atoms, tGraphemes, minTgi);
+    if (isConsonantLUT[qg.atoms[0]] === 1) {
+        return findConsonantCandidates(qg.atoms, target, minTgi);
     }
-    return findExactCandidates(qg.atoms, tGraphemes, minTgi);
+    return findExactCandidates(qg.atoms, target, minTgi);
 }
 
-// 한글 초성-only 쿼리 grapheme 판정: 모음이 없으면서 첫 atom이 Hangul compat 자모.
-// ASCII 등 비한글 grapheme은 vowelIndex=-1이지만 "초성" 개념이 없으므로 약화 대상 아님.
 function isHangulChoseongOnly(qg: QueryGrapheme): boolean {
     if (qg.vowelIndex !== -1) return false;
-    const firstCode = qg.atoms.charCodeAt(0);
-    return firstCode >= 0x3131 && firstCode <= 0x3163;
+    return isConsonantLUT[qg.atoms[0]] === 1;
 }
 
-// DP 상태의 Pareto 엔트리. (score, runLen) 둘 다 미래 전이에서 의미를 가짐:
-// score 는 현재 누적 점수, runLen 은 이 상태에서 이어지는 consecutive 전이가 얻을 삼각수 보너스 크기 결정.
-// 한쪽이 다른 쪽을 모든 차원에서 지배하지 않는 한 둘 다 보존해야 최적성 보장.
+// DP 상태 Pareto 엔트리
 type FrontierEntry = {
     score: number;
     runLen: number;
@@ -395,7 +382,6 @@ type FrontierEntry = {
     parentFIdx: number;
 };
 
-// consMap 엔트리 — endTgi 별로 Pareto-dedup된 (score, runLen) 집합.
 type ConsPred = {
     score: number;
     runLen: number;
@@ -403,8 +389,6 @@ type ConsPred = {
     fIdx: number;
 };
 
-// Pareto insert: 기존 엔트리 중 ne 를 지배하면 reject, ne 가 지배하는 것은 제거.
-// 동점 (score, runLen 완전 동일) 은 중복 방지로 reject.
 function insertPareto<T extends { score: number; runLen: number }>(arr: T[], ne: T): void {
     for (let i = arr.length - 1; i >= 0; i--) {
         const e = arr[i];
@@ -419,8 +403,6 @@ function insertPareto<T extends { score: number; runLen: number }>(arr: T[], ne:
     arr.push(ne);
 }
 
-// 후보의 위치 점수 (경계 보너스, 위치 0 보너스, per-grapheme bonus)
-// 한글 초성-only 쿼리 grapheme이면 positionZero/boundary 기여는 sc.choseongWeaken 배수로 축약.
 function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring, isChoseongOnly: boolean): number {
     const weaken = isChoseongOnly ? sc.choseongWeaken : 1;
     let s = 0;
@@ -433,19 +415,11 @@ function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScorin
 }
 
 /**
- * DP 기반 최적 정렬 매칭. 모든 유효 후보를 수집한 뒤 동적 프로그래밍으로
- * 위치 보너스, 연속 보너스, gap 페널티를 고려한 최적 경로를 선택한다.
- * 결과의 `score` 필드에 최종 스코어가 설정된다.
- *
- * `scoring` 파라미터로 SCORING 상수 오버라이드 및 per-grapheme 가중치를 적용할 수 있다.
- * graphemeBonus는 candidatePositionScore에 가산되므로 gap sweep/consecutive 최적화와 충돌 없음.
- *
- * @param scoring - 스코어링 커스터마이징 설정 (생략 시 SCORING 기본값 사용)
- * @returns 최적 정렬의 매칭 결과 (score 포함), 매칭 실패 시 null
+ * DP 기반 최적 정렬 매칭.
  */
 export function matchBest(query: Query, target: Target, scoring?: ScoringConfig): MatchResult | null {
     const qGraphemes = query.graphemes;
-    const tGraphemes = target.graphemes;
+    const T = target.graphemeCount;
     const Q = qGraphemes.length;
 
     if (Q === 0) {
@@ -458,25 +432,23 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
             score: 0,
         };
     }
-    if (Q > tGraphemes.length) return null;
+    if (Q > T) return null;
 
     const sc = resolveScoring(scoring, target);
 
-    // Phase 1: 각 쿼리 grapheme에 대해 모든 유효 후보 수집
+    // Phase 1: 후보 수집
     const allCandidates: Candidate[][] = [];
     for (let qi = 0; qi < Q; qi++) {
-        const candidates = findCandidates(qGraphemes[qi], tGraphemes, 0);
+        const candidates = findCandidates(qGraphemes[qi], target, 0);
         if (candidates.length === 0) return null;
         allCandidates.push(candidates);
     }
 
-    // Phase 2: DP — dpFrontier[qi][ci] = (qi, ci) 상태의 Pareto 최적 (score, runLen) 집합.
-    // 삼각수 연속 보너스가 prev.runLen 에 의존하므로, 동일 상태에서
-    //   (score 낮지만 runLen 큰) 경로와 (score 높지만 runLen=1인) 경로가
-    //   후속 consecutive 전이에서 역전될 수 있어 둘 다 보존 필요.
+    // Phase 2: DP
+    // consMap 대체: tgi-indexed 배열 (Map 할당/GC 제거)
+    const consByTgi: (ConsPred[] | undefined)[] = new Array(T);
     const dpFrontier: FrontierEntry[][][] = [];
 
-    // qi = 0 초기화
     const firstFrontier: FrontierEntry[][] = [];
     const firstIsChoseongOnly = isHangulChoseongOnly(qGraphemes[0]);
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
@@ -498,8 +470,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         const isChoseongOnly = isHangulChoseongOnly(qGraphemes[qi]);
         const currFrontier: FrontierEntry[][] = [];
 
-        // gap 전이는 runLen 을 1로 리셋하므로 각 prev pci 당 max-score 엔트리만 필요.
-        // endTgi 순으로 정렬 후 prefix-max sweep.
         type GapPred = { endTgi: number; gapVal: number; pci: number; fIdx: number };
         const gapPreds: GapPred[] = [];
         for (let pci = 0; pci < prevCands.length; pci++) {
@@ -525,17 +495,17 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         }
         gapPreds.sort((a, b) => a.endTgi - b.endTgi);
 
-        // consMap: endTgi → Pareto-dedup된 (score, runLen, pci, fIdx) 집합.
-        // 같은 endTgi 에 여러 pci 가 있을 수 있고, 같은 pci 안에서도 frontier 여러 엔트리가 있을 수 있음.
-        const consMap = new Map<number, ConsPred[]>();
+        // consMap: tgi → ConsPred[] (Map 대신 flat 배열로 GC 부담 제거)
+        const consUsed: number[] = [];
         for (let pci = 0; pci < prevCands.length; pci++) {
             const frontier = prevFrontier[pci];
             if (frontier.length === 0) continue;
             const e = prevCands[pci].endTgi;
-            let arr = consMap.get(e);
+            let arr = consByTgi[e];
             if (!arr) {
                 arr = [];
-                consMap.set(e, arr);
+                consByTgi[e] = arr;
+                consUsed.push(e);
             }
             for (let f = 0; f < frontier.length; f++) {
                 const fe = frontier[f];
@@ -543,7 +513,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
             }
         }
 
-        // gap sweep state
         let gapScanPos = -1;
         let gapBestVal = -Infinity;
         let gapBestPci = -1;
@@ -555,7 +524,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
             const posScore = candidatePositionScore(c, target, sc, isChoseongOnly);
             const frontier: FrontierEntry[] = [];
 
-            // Gap 전이: endTgi ≤ s-2. runLen 은 1로 리셋.
             const gapThreshold = s - 2;
             while (gapScanPos + 1 < gapPreds.length && gapPreds[gapScanPos + 1].endTgi <= gapThreshold) {
                 gapScanPos++;
@@ -575,8 +543,7 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
                 });
             }
 
-            // Consecutive 전이: endTgi === s-1. 각 consMap entry 에 대해 (score + α×newRunLen, newRunLen).
-            const consFrontier = consMap.get(s - 1);
+            const consFrontier = consByTgi[s - 1];
             if (consFrontier) {
                 for (let i = 0; i < consFrontier.length; i++) {
                     const e = consFrontier[i];
@@ -594,9 +561,14 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         }
 
         dpFrontier.push(currFrontier);
+
+        // consByTgi cleanup: 사용된 슬롯만 초기화 (전체 순회 회피)
+        for (let k = 0; k < consUsed.length; k++) {
+            consByTgi[consUsed[k]] = undefined;
+        }
     }
 
-    // Phase 3: 최적 종점 선택. score 최대, 동점이면 runLen 큰 쪽 (결정성).
+    // Phase 3: 최적 종점
     let bestFinalScore = -Infinity;
     let bestFinalRunLen = -1;
     let bestFinalCi = -1;
@@ -617,7 +589,7 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
 
     if (bestFinalCi === -1 || bestFinalScore === -Infinity) return null;
 
-    // Phase 4: 백트래킹 — frontier entry 의 parentPci/parentFIdx 체인 복원
+    // Phase 4: 백트래��
     const chosenCi = new Array<number>(Q);
     const chosenFIdx = new Array<number>(Q);
     chosenCi[Q - 1] = bestFinalCi;
@@ -628,7 +600,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         chosenFIdx[qi - 1] = entry.parentFIdx;
     }
 
-    // 모든 매칭 인덱스 수집
     const allIndices: number[] = [];
     for (let qi = 0; qi < Q; qi++) {
         const candidate = allCandidates[qi][chosenCi[qi]];
@@ -637,7 +608,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         }
     }
 
-    // dedup (종성 확장으로 인접 후보가 같은 인덱스 포함할 수 있음)
     const indices: number[] = [];
     for (const idx of allIndices) {
         if (indices.length === 0 || indices[indices.length - 1] !== idx) {
@@ -645,10 +615,9 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         }
     }
 
-    // Phase 5: 전역 보정으로 최종 스코어 계산
+    // Phase 5: 전역 보정
     let score = bestFinalScore;
 
-    // prefix 보너스: 위치 0부터 연속 매치
     if (indices.length > 0 && indices[0] === 0) {
         let isPrefix = true;
         for (let i = 1; i < indices.length; i++) {
@@ -660,17 +629,11 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         if (isPrefix) score += sc.prefixBonus;
     }
 
-    // exact 보너스: 타겟의 모든 grapheme을 빠짐없이 커버 (0..len-1 연속)
-    if (
-        indices.length === tGraphemes.length &&
-        indices[0] === 0 &&
-        indices[indices.length - 1] === tGraphemes.length - 1
-    ) {
+    if (indices.length === T && indices[0] === 0 && indices[indices.length - 1] === T - 1) {
         score += sc.exactBonus;
     }
 
-    // 타겟 길이 페널티 (짧은 타겟 선호). cap 이상 길이는 포화.
-    score += sc.targetLengthPenalty * Math.min(tGraphemes.length, sc.lengthPenaltyCap);
+    score += sc.targetLengthPenalty * Math.min(T, sc.lengthPenaltyCap);
 
     const result = buildMatchResult(indices, target, qGraphemes);
     result.score = score;

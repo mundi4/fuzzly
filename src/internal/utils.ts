@@ -1,4 +1,5 @@
 import type { Atoms } from "../types";
+import { atomCharToId, isVowelLUT } from "./atomRegistry";
 
 // ㅘ → ㅗㅏ 식의 중성 분해
 const VOWEL_SPLIT_MAP: Record<string, string> = {
@@ -74,30 +75,6 @@ const VOWEL_TABLE = [
     "ㅢ",
     "ㅣ",
 ];
-
-const VOWEL_SET: Record<string, boolean> = {
-    ㅏ: true,
-    ㅐ: true,
-    ㅑ: true,
-    ㅒ: true,
-    ㅓ: true,
-    ㅔ: true,
-    ㅕ: true,
-    ㅖ: true,
-    ㅗ: true,
-    ㅘ: true,
-    ㅙ: true,
-    ㅚ: true,
-    ㅛ: true,
-    ㅜ: true,
-    ㅝ: true,
-    ㅞ: true,
-    ㅟ: true,
-    ㅠ: true,
-    ㅡ: true,
-    ㅢ: true,
-    ㅣ: true,
-};
 
 const TAIL_TABLE = [
     "", // 종성 없음
@@ -239,17 +216,12 @@ export function normalizeCharToCompat(ch: string): string {
     return ch; // 이미 호환자모거나 일반 문자
 }
 
-export function isVowel(ch: string): boolean {
-    return VOWEL_SET[ch] === true;
-}
-
-// atoms 문자열에서 중성/종성 시작 인덱스 계산.
-// 한글이 아닌 원자(ASCII, emoji 등)는 모음이 없으므로 두 값 모두 -1.
+// atoms Uint8Array에서 중성/종성 시작 인덱스 계산.
 export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex: number } {
     let vowelIndex = -1;
     let tailIndex = -1;
     for (let i = 0; i < atoms.length; i++) {
-        const v = VOWEL_SET[atoms[i]] === true;
+        const v = isVowelLUT[atoms[i]] === 1;
         if (vowelIndex === -1) {
             if (v) vowelIndex = i;
         } else {
@@ -265,52 +237,58 @@ export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex:
 // intern cache
 const atomsCache = new Map<string, Atoms>();
 
+// 임시 빌드 버퍼 (최대 6 atoms: lead + 2 vowel + 2 tail + margin)
+const buildBuf = new Uint8Array(8);
+
 //
-// Main: 문자 하나 → atom sequence
+// Main: 문자 하나 → atom ID sequence (Uint8Array, interned)
 //
 export function decomposeToAtoms(ch: string): Atoms {
     const cached = atomsCache.get(ch);
     if (cached) return cached;
 
     const code = ch.charCodeAt(0);
-    let ret: string;
+    let len = 0;
 
     // 1) 완성형 한글
     if (code >= 0xac00 && code <= 0xd7a3) {
-        const out: string[] = [];
         const base = code - 0xac00;
         const leadIndex = Math.floor(base / 588);
         const vowelIndex = Math.floor((base % 588) / 28);
         const tailIndex = base % 28;
 
-        out.push(LEAD_TABLE[leadIndex]);
+        buildBuf[len++] = atomCharToId(LEAD_TABLE[leadIndex]);
 
-        for (const v of splitVowel(VOWEL_TABLE[vowelIndex])) {
-            out.push(v);
+        const splitV = splitVowel(VOWEL_TABLE[vowelIndex]);
+        for (let i = 0; i < splitV.length; i++) {
+            buildBuf[len++] = atomCharToId(splitV[i]);
         }
 
         if (tailIndex !== 0) {
-            for (const t of splitTail(TAIL_TABLE[tailIndex])) {
-                out.push(t);
+            const splitT = splitTail(TAIL_TABLE[tailIndex]);
+            for (let i = 0; i < splitT.length; i++) {
+                buildBuf[len++] = atomCharToId(splitT[i]);
             }
         }
-        ret = out.join("");
     }
 
     // 2) 자모(초/중/종 + 호환자모)
     else if ((code >= 0x1100 && code <= 0x11ff) || (code >= 0x3130 && code <= 0x318f)) {
-        const out: string[] = [];
         const norm = normalizeCharToCompat(ch);
         const mid = splitVowel(norm);
         const broken = splitTail(mid);
-        for (const s of broken) out.push(s);
-        ret = out.join("");
+        for (let i = 0; i < broken.length; i++) {
+            buildBuf[len++] = atomCharToId(broken[i]);
+        }
     }
 
-    // 3) 그 외
+    // 3) 그 외 (ASCII, emoji, CJK 등)
     else {
-        ret = ch;
+        buildBuf[len++] = atomCharToId(ch);
     }
+
+    const ret = new Uint8Array(len);
+    ret.set(buildBuf.subarray(0, len));
 
     atomsCache.set(ch, ret);
     return ret;

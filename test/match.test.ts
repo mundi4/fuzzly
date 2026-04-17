@@ -174,7 +174,7 @@ describe("match - 유닛 테스트", () => {
             if (result) {
                 for (const idx of result.indices) {
                     expect(idx).toBeGreaterThanOrEqual(0);
-                    expect(idx).toBeLessThan(target.graphemes.length);
+                    expect(idx).toBeLessThan(target.graphemeCount);
                 }
             }
         });

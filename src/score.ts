@@ -49,14 +49,35 @@ function resolveChoseongWeaken(v: number | undefined): number {
     return v > 1 ? 1 : v;
 }
 
-export function resolveScoring(config: ScoringConfig | undefined, target: Target): ResolvedScoring {
-    const w = config?.weights;
-    const gb = config?.graphemeBonus;
+// config === undefined일 때 ���번 새 객체를 만들지 않도록 캐시.
+// matchBest가 4000회/키스트로크 호출되므로 기본 설정 시 4000 객체 할당 제거.
+const DEFAULT_RESOLVED: ResolvedScoring = {
+    positionZero: SCORING.POSITION_ZERO,
+    boundary: SCORING.BOUNDARY,
+    consecutive: SCORING.CONSECUTIVE,
+    gapPenalty: SCORING.GAP_PENALTY,
+    prefixBonus: SCORING.PREFIX_BONUS,
+    exactBonus: SCORING.EXACT_BONUS,
+    targetLengthPenalty: SCORING.TARGET_LENGTH_PENALTY,
+    lengthPenaltyCap: SCORING.LENGTH_PENALTY_CAP,
+    choseongWeaken: SCORING.CHOSEONG_WEAKEN,
+    getBonus: NO_BONUS,
+};
+
+export function resolveScoring(config: ScoringConfig | undefined, _target: Target): ResolvedScoring {
+    if (config == null) return DEFAULT_RESOLVED;
+
+    const w = config.weights;
+    const gb = config.graphemeBonus;
+
+    // weights도 graphemeBonus도 없으면 기본값 그대로
+    if (w == null && gb == null) return DEFAULT_RESOLVED;
+
     let getBonus: (gi: number) => number;
     if (gb == null) {
         getBonus = NO_BONUS;
     } else if (typeof gb === "function") {
-        getBonus = (gi) => gb(gi, target);
+        getBonus = (gi) => gb(gi, _target);
     } else {
         getBonus = (gi) => (gi < gb.length ? Number(gb[gi] ?? 0) : 0);
     }
@@ -98,7 +119,7 @@ export function createGraphemeBonuses(
     target: Target,
     ranges: { start: number; end: number; bonus: number }[],
 ): number[] {
-    const bonuses = new Array<number>(target.graphemes.length).fill(0);
+    const bonuses = new Array<number>(target.graphemeCount).fill(0);
     const gIdx = target.graphemeIndexes;
     for (const { start, end, bonus } of ranges) {
         if (start >= end) continue;

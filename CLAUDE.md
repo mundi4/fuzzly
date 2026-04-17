@@ -1,241 +1,80 @@
 # CLAUDE.md
 
-Guidance for Claude / AI assistants working in this repository.
-
 ## Project Overview
 
-**fuzzly** is a TypeScript library that performs "approximate, good-enough" fuzzy matching of Korean (Hangul) text, intended for command-palette style search where the user types a few remembered characters or initial consonants and expects to narrow results live as they type.
+**fuzzly** — 커맨드팔레트용 한글 퍼지 매칭 TypeScript 라이브러리. 초성, 부분 조합, 중간 IME 상태 모두 매칭. 타이핑할수록 결과가 단조감소(monotonic narrowing).
 
-The library targets a very specific UX:
-
-1. The user types a few characters (initial consonants only is fine, partially composed syllables are fine, out-of-order across whitespace is fine).
-2. Results must monotonically narrow as additional keystrokes are added — adding a keystroke must never *expand* the result set.
-3. Intermediate composition states of a Hangul syllable (e.g. `ㄱ` → `가` → `갑` → `값`) must all match the same final target text.
-
-See `readme.md` (Korean) for the long-form design notes and rationale, and `test_analysis.md` for a worked example of tail spillover behavior.
-
-## Tech Stack & Tooling
-
-- **Language:** TypeScript (strict mode), ESM (`"type": "module"`)
-- **Runtime target:** `esnext`, `lib: ["ES2024", "ESNext.Intl"]` — depends on `Intl.Segmenter`
-- **Build:** [`tsup`](https://tsup.egoist.dev/) emitting both ESM and CJS with `.d.ts`
-- **Tests:** [`vitest`](https://vitest.dev/) with `globals: true`, Node environment, `test/**/*.test.ts`
-- **Lint + format:** [`@biomejs/biome`](https://biomejs.dev/) (pinned exact version via `-E`). Biome replaces ESLint + Prettier — do **not** reintroduce either.
-- **Package entry:** `./src/index.ts` (raw TS — consumers are expected to bundle, or use the `tsup` build output `dist/`)
-
-There is no git pre-commit hook. Don't add one without being asked.
-
-### Common commands
+## Commands
 
 ```bash
-npm test          # vitest run (one-shot)
-npm run test:ui   # vitest watch / UI mode
-npm run build     # tsup build into dist/ (esm + cjs + dts)
-
-npm run check     # biome check: format + lint + organize-imports (read-only)
-npm run check:fix # biome check --write: apply safe fixes
-npm run format    # biome format --write: formatting only
-npm run lint      # biome lint: lint only, read-only
-npm run ci        # biome ci: strict CI-mode check (no writes, non-zero on any issue)
+npm test            # vitest run
+npm run build       # tsup → dist/ (esm + cjs + iife + dts)
+npm run check:fix   # biome check --write (format + lint + import sort)
 ```
 
-There is no separate `typecheck` script. `vitest` enables `typecheck` via `tsconfig.test.json`, and `tsup --dts` will also typecheck on build. Biome does **not** typecheck — it only handles syntax, formatting, lint rules, and import organization.
+소스/테스트 수정 후 커밋 전에 `npm run check:fix` + `npm test` 실행.
 
-### Biome configuration (`biome.json`)
+## Key Architecture
 
-- `$schema` is pinned to the installed Biome version (currently `2.4.11`). When bumping Biome, update both the package version (`-E`) and the schema URL, then run `npx biome migrate --write` to apply any config migrations.
-- Formatter: 4-space indent, `lineWidth: 120`, LF line endings, double quotes, always-semicolons, trailing-comma `"all"`.
-- Linter: `recommended` rule set on. No custom rules enabled beyond recommended.
-- Assist: `organizeImports` is on (imports get alphabetized/grouped on `check:fix`).
-- VCS integration is enabled — Biome honors `.gitignore`, so `dist/`, `node_modules/`, etc. are automatically excluded.
-- `files.includes` explicitly covers `src/**/*.ts`, `test/**/*.ts`, root-level `*.ts`, and `*.json` (except `package-lock.json`).
-- **Test override:** `noNonNullAssertion` is turned off for `test/**/*.ts`. Tests use `buildQuery("…")!` and `match(...)!` extensively, which is idiomatic for vitest specs. Keep this override.
+### Atom ID System (`internal/atomRegistry.ts`)
 
-When you touch source or test files, run `npm run check:fix` before committing. Biome is fast (whole repo in ~35ms) so this is essentially free.
+모든 자모/문자에 정수 ID 할당 (Uint8Array):
+- **고정**: 자음 1-19, 모음 20-33, ASCII 34-128
+- **동적**: CJK/emoji 등 129-254 (126개, 초과 시 RangeError)
+- LUT: `isVowelLUT`, `isConsonantLUT`, `isHangulJamoLUT` — Uint8Array indexed
 
-### Known pre-existing typecheck errors
+`decomposeToAtoms(ch)` → `Uint8Array` (interned via cache, `===` 참조동등 유효).
 
-`tsc -p tsconfig.test.json` currently reports several `tailSpillover` errors in `test/integration.test.ts` — they date from the refactor that changed `tailSpillover` from `boolean` to `"never" | "always" | "lastOnly"` and the test file was not updated. Vitest runs fine (it strips types via esbuild without typechecking) and all 197 tests pass. Do not "fix" these silently as scope creep; address them as a separate, explicit task.
+### Target Flat Layout
 
-### TypeScript project layout
-
-`tsconfig.json` is a solution file with two project references:
-
-- `tsconfig.lib.json` — `rootDir: ./src`, includes `src` and `env.d.ts`
-- `tsconfig.test.json` — adds `vitest/globals` types, includes both `test` and `src`
-
-If you add a new top-level source folder, update the appropriate `tsconfig.*.json`.
-
-## Repository Layout
+`preprocessTarget(input)` → `Target`. 이전 `TargetGrapheme[]` 대신 flat typed array:
 
 ```
-src/
-  index.ts                  Public API barrel (only export from here)
-  types.ts                  All public types + DEFAULT_MATCH_OPTIONS
-  buildQuery.ts             User input -> Query (with literal & atom decomposition)
-  preprocessTarget.ts       Target string -> Target (grapheme-segmented, atom-decomposed)
-  match.ts                  Core matching algorithm (Query + Target -> grapheme indices)
-  buildMatchRanges.ts       Grapheme indices -> highlight ranges in original input
-  internal/
-    segmenter.ts            Singleton Intl.Segmenter (grapheme granularity, "und" locale)
-    utils.ts                Hangul decomposition tables + decomposeToAtoms (atoms cache)
-
-test/
-  buildQuery.test.ts
-  buildMatchRanges.test.ts
-  match.test.ts             Largest test file — primary regression suite for the algorithm
-  preprocessTarget.test.ts
-  integration.test.ts       End-to-end pipeline tests
-  comprehensive.test.ts     Currently a placeholder
-
-biome.json                  Biome formatter + linter config
-readme.md                   Korean design notes — read these before changing match.ts
-test_analysis.md            Worked example explaining a tail-spillover edge case
-env.d.ts                    Declares optional FUZZLY_USE_SEGMENTER env var
+atomsFlat: Uint8Array      — 전체 atom ID 연결
+atomStarts: Uint32Array    — grapheme i의 시작 offset
+atomLens: Uint8Array       — grapheme i의 atom 수
+vowelIdxs / tailIdxs: Int8Array — -1 = 없음
+boundaryFlags: Uint8Array  — 0/1
+charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError
 ```
 
-## Public API
+grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 
-The only supported import surface is `src/index.ts`:
+### IDB 직렬화
 
-```ts
-import {
-  buildQuery,
-  preprocessTarget,
-  match,
-  buildMatchRanges,
-  // types
-  Query, QueryGrapheme, Target, MatchRange, GraphemeIndices, Atoms,
-  QueryOptions, TargetOptions, MatchOptions,
-} from "fuzzly";
+Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClone/IDB 직접 저장 가능.
+동적 atom이 있으면 `snapshotDynamicAtoms()` / `restoreDynamicAtoms()` 로 registry 저장/복원 필요.
+한글+ASCII 전용이면 추가 조치 불필요.
+
+### match.ts
+
+3개 함수: `match` (greedy), `matchBest` (DP + scoring), `matchLiteral` (indexOf).
+
+핵심 규칙:
+- **vowel-sticks-to-lead**: 쿼리 모음은 초성이 매치된 타겟 음절 안에서만 소비
+- 종성은 이후 음절로 자유롭게 넘어감 (자음 자리만)
+- 모음은 절대 spill하지 않음
+- `matchBest` DP: candidate 수집 → Pareto frontier → gap/consecutive sweep → backtrack
+
+## Public API (`src/index.ts`)
+
 ```
-
-The intended pipeline is:
-
+buildQuery(input) → Query
+preprocessTarget(input) → Target
+match(query, target) → MatchResult | null
+matchBest(query, target, scoring?) → MatchResult | null (score 포함)
+matchLiteral(literal, target) → MatchResult | null
+buildMatchRanges(hitMaps[], target) → MatchRange[]
+createSearcher(items, opts?) → Searcher (session 최적화 내장)
+hasDynamicAtoms() / snapshotDynamicAtoms() / restoreDynamicAtoms()
 ```
-buildQuery(userInput, queryOpts)         -> Query
-preprocessTarget(targetStr, targetOpts)  -> Target   (cache this per item)
-match(query, target, matchOpts)          -> number[] | null  (grapheme indices)
-buildMatchRanges([hits...], target)      -> MatchRange[]     (UTF-16 char ranges in target.input)
-```
-
-Targets are expected to be precomputed once and reused across many queries — that's the whole point of separating `preprocessTarget` from `match`.
-
-## Domain Concepts (read before touching `match.ts`)
-
-These terms appear throughout the code and are critical to understanding the algorithm.
-
-### Hangul anatomy
-
-A modern Hangul syllable like `값` decomposes into:
-
-- **lead / 초성:** the leading consonant (`ㄱ`)
-- **vowel / 중성:** the vowel, possibly a diphthong (`ㅏ`)
-- **tail / 종성:** the trailing consonant, possibly a cluster (`ㅄ` → `ㅂㅅ`)
-
-`internal/utils.ts` contains the Unicode tables (`LEAD_TABLE`, `VOWEL_TABLE`, `TAIL_TABLE`) plus split maps:
-
-- `VOWEL_SPLIT_MAP` — `ㅘ → ㅗㅏ`, `ㅙ → ㅗㅐ`, etc. (compound vowels into atoms)
-- `TAIL_SPLIT_MAP` — `ㄳ → ㄱㅅ`, `ㄻ → ㄹㅁ`, etc. (compound tails into atoms)
-
-### Atoms
-
-`Atoms` (currently `type Atoms = string`) is a fully-decomposed sequence of single jamo "keystroke atoms." Compound vowels and compound tails are split. So `값` becomes the string `"ㄱㅏㅂㅅ"` (4 atoms).
-
-`decomposeToAtoms` is **memoized via `atomsCache: Map<string, Atoms>`** in `internal/utils.ts`. This memoization is what makes the equality check `qAtoms === tAtoms` in `match.ts` valid — the strings are interned. Don't break this invariant: always go through `decomposeToAtoms` to get an `Atoms` value.
-
-### Graphemes
-
-Both `Query` and `Target` segment input by *grapheme cluster* using the shared `Intl.Segmenter` instance from `internal/segmenter.ts`. This means emoji, ZWJ sequences, and so on are treated as a single unit and indexed accordingly.
-
-- `Target.graphemes: Array<Atoms>` — one entry per grapheme. For single-codepoint clusters this is the decomposed atom string; for multi-codepoint clusters (emoji etc.) it's the cluster string itself.
-- `Target.charIndexes[i]` — UTF-16 start offset of grapheme `i` in the original input.
-- `Target.graphemeIndexes[utf16Offset]` — reverse map from UTF-16 offset back to grapheme index. Only populated at meaningful offsets; assume sparse and access via known indices only.
-- `QueryGrapheme` carries the per-grapheme metadata `match` needs: `atoms`, `vowelIndex`, `tailIndex` (start of tail in `atoms`, `-1` if none), `allowTailSpillover` (currently always set to `false` by `buildQuery`).
-
-### Spillover
-
-If the user types `갑` while really meaning to start typing `가방`, the trailing `ㅂ` should be tried as the **initial** consonant of the *next* target grapheme. This is "tail spillover."
-
-`MatchOptions.tailSpillover`:
-
-- `"never"` — disable
-- `"always"` — every query syllable's tail can spill into the next target grapheme
-- `"lastOnly"` (default) — only the **last** query grapheme spills (assumed to be mid-composition)
-
-Vowels never spill — no Korean syllable starts with a vowel.
-
-`MatchOptions.remainder` controls what happens when query atoms are exhausted but the target grapheme still has leftover atoms (e.g. query `가` against target `갑`):
-
-- `"strict"` — leftover atoms cause failure (with a `tailSpillover` exception in code)
-- `"allow"` — always accept
-- `"tailSpilloverOnly"` (default) — accept only if the current query grapheme is one for which spillover would be enabled
-
-The defaults are in `DEFAULT_MATCH_OPTIONS`:
-```ts
-{ whitespace: "ignore", caseSensitive: true, tailSpillover: "lastOnly", remainder: "tailSpilloverOnly" }
-```
-
-Note: `MatchOptions.whitespace` is declared (`"ignore" | "literal" | "normalize"`) but `match.ts` does not currently branch on it explicitly — whitespace handling currently falls out of grapheme-by-grapheme iteration. Treat this as a known gap and ask before adding behavior here.
-
-### Literal queries
-
-`buildQuery` treats input that is fully wrapped in double quotes (`"…"`) as a **literal** query: no fuzzy decomposition, just `indexOf` on `target.normalizedInput`. The resulting `Query.literal` is non-null and `Query.graphemes` is empty. `match` has a dedicated literal branch at the top.
-
-For non-literal input, `buildQuery` strips all `"` characters (this is flagged as a known design question in a code comment — leave it unless explicitly asked to change).
-
-### Case sensitivity
-
-Lower-casing happens at the *input* boundary in both `buildQuery` and `preprocessTarget` based on their respective `caseSensitive` options. `MatchOptions.caseSensitive` exists in the type but `match` does not re-normalize — make sure query and target were built with consistent case settings.
-
-## Algorithm Notes (`src/match.ts`)
-
-`match` walks query graphemes (`qi`, with intra-grapheme atom cursor `qai`) against target graphemes (`tgi`) with one big `TARGET_CHAR_LOOP`. Key invariants and tricks to preserve when editing:
-
-1. **Reference equality on atoms** (`qAtoms === tAtoms`) is a fast path that depends on the `atomsCache` interning. If you stop routing atom strings through `decomposeToAtoms`, this branch silently breaks.
-2. **`qai !== 0` means "we are mid-spillover"** — i.e., the previous target grapheme already consumed the lead atoms of the current query grapheme, and we're now trying to consume the rest from the next target grapheme(s). Spillover advances `tgi` on each step. Compound-tail clusters (e.g. `ㄳ` as a *lead* of a query grapheme) are explicitly allowed to spill across multiple target graphemes (see the `vowelIndex === -1` branch).
-3. **Vowels never spill.** When mismatch occurs at a vowel position (`qai < tailIndex` and `qai >= vowelIndex`), the entire current target grapheme is rejected and we move on (`qai = 0; tgi++`).
-4. **Tail mismatches are conditionally spilled** based on `tailSpillover === "always"` or (`"lastOnly"` and `qi === queryGraphemes.length - 1`).
-5. The function returns `number[]` of *target grapheme indices* that participated in the match (one entry per matched query grapheme, plus extra entries when a single query grapheme spills across multiple target graphemes). It does **not** return UTF-16 ranges — that conversion is `buildMatchRanges`' job.
-6. There is a comment at the top of `match.ts` literally saying "30분 후에 보면 잊어버릴 코드" ("code I'll forget in 30 minutes") — this file is intentionally dense. Before refactoring it, read `readme.md` and `test_analysis.md`, and run the full `test/match.test.ts` after every change.
-
-## `buildMatchRanges`
-
-Takes one or more hit arrays (sorted grapheme indices, one array per sub-query) plus a `Target`, dedupes, sorts, and converts contiguous runs of grapheme indices into `{ start, end }` UTF-16 ranges using `target.charIndexes`. The end of a range past the last grapheme falls back to `target.input.length`. The function assumes single-array input is already sorted and skips re-sorting it.
 
 ## Conventions
 
-- **Formatting and lint are Biome-enforced.** Don't hand-format; run `npm run check:fix` instead. Style decisions (quote style, semicolons, trailing commas, line width, import order, `import type`, etc.) are delegated to Biome — if you disagree, change `biome.json`, don't fight it in individual files.
-- **Imports inside `src/`** use relative paths and explicit extensions are not required (bundler resolution). Import order is sorted by Biome's `organizeImports` assist.
-- **Type-only imports** must use `import type { … }` — Biome's `useImportType` rule enforces this.
-- **`internal/`** is private — do not re-export anything from `internal/` through `src/index.ts`.
-- **All public types live in `src/types.ts`.** Don't define exported types ad hoc in feature files.
-- **No comments in non-Korean text are required** — existing code mixes Korean inline comments with English identifiers. When adding comments to existing files, match the surrounding language. New top-level docs (like this file) can be in English.
-- **Don't create new files unless the task requires it.** This codebase is small and intentionally flat under `src/`.
-- **No emojis in source or commits** unless the user explicitly asks.
-
-## Testing Conventions
-
-- Tests live under `test/` and end in `.test.ts`. Vitest is configured to scan `test/**/*.test.ts` only — tests inside `src/` will not be picked up.
-- `globals: true` is on, so `describe` / `it` / `expect` are ambient. No imports required, but existing tests still import them — match the surrounding style.
-- The `match.test.ts` suite is the canonical regression bed for the matching algorithm. Any change to `match.ts`, `buildQuery.ts`, or `preprocessTarget.ts` should pass it without modification, and new behavior should add cases there.
-- When debugging an unexpected match/non-match, write down the target grapheme atoms and query grapheme atoms first (the way `test_analysis.md` does) before changing code.
-
-## Git & Branching
-
-- Default branch: `main`.
-- When working on behalf of Claude Code on the web, develop on the assigned feature branch and push there. Never push to `main` without explicit user approval.
-- Commit messages in this repo are short, lowercase-ish, present-tense, English (e.g. `fix tail spillover matching logic`, `change Atoms to string from readonly string[]`). Match that style.
-- There are no commit hooks. Don't add any. Run `npm run check` and `npm test` manually before committing.
-- Do **not** open pull requests automatically — only when the user explicitly asks.
-
-## Things That Are Intentionally Not Done Yet
-
-These are noted in code comments / `readme.md` and should not be "fixed" silently:
-
-- Whitespace handling is under-specified — the `MatchOptions.whitespace` enum exists but `match` doesn't fully branch on it. The README discusses four possible semantics; the current de facto behavior is "ignore" via grapheme iteration.
-- `allowTailSpillover` on `QueryGrapheme` is always set to `false` by `buildQuery`; spillover decisions currently come from `MatchOptions.tailSpillover` instead. The per-grapheme flag is reserved for future use (knowing which grapheme is mid-composition).
-- `buildQuery` strips all `"` from non-literal input, which means searching for a literal `"` is currently impossible. Flagged in a code comment.
-- The matching algorithm's edge cases are not exhaustively analyzed — see the comment at the top of `match.ts`.
-
-If a task seems to touch any of these, surface the trade-off to the user instead of guessing.
+- Biome enforced. 수동 포맷 금지, `check:fix` 사용
+- `import type { … }` 필수 (Biome `useImportType`)
+- `internal/`은 private — `index.ts`에서 re-export 금지 (atom registry 함수 제외)
+- 모든 public type은 `types.ts`에 정의
+- 테스트: `test/**/*.test.ts`, `globals: true`, `match.test.ts`가 canonical regression suite
+- 커밋: 짧고 소문자, 현재형 영어. hook 없음
+- `main` 직접 push는 사용자 승인 필요. PR 자동 생성 금지
