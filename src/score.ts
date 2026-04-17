@@ -6,8 +6,9 @@ import type { MatchResult, ScoringConfig, Target } from "./types";
  *
  * 스코어 구성:
  * - 후보 선택 시: POSITION_ZERO, BOUNDARY, graphemeBonus (candidatePositionScore)
- * - DP 전이 시: CONSECUTIVE (연속 보너스), GAP_PENALTY (gap 페널티)
- * - 최종 보정: PREFIX_BONUS, EXACT_BONUS, INITIAL_CONSONANT_PENALTY, TARGET_LENGTH_PENALTY
+ *   - 초성-only 쿼리 grapheme에서 POSITION_ZERO, BOUNDARY는 CHOSEONG_WEAKEN으로 축약 적용
+ * - DP 전이 시: CONSECUTIVE (run 길이 기반 삼각수 보너스), GAP_PENALTY
+ * - 최종 보정: PREFIX_BONUS, EXACT_BONUS, TARGET_LENGTH_PENALTY × min(L, LENGTH_PENALTY_CAP)
  */
 export const SCORING = {
     POSITION_ZERO: 100,
@@ -16,8 +17,9 @@ export const SCORING = {
     GAP_PENALTY: -3,
     PREFIX_BONUS: 200,
     EXACT_BONUS: 500,
-    INITIAL_CONSONANT_PENALTY: -30,
     TARGET_LENGTH_PENALTY: -1,
+    LENGTH_PENALTY_CAP: 16,
+    CHOSEONG_WEAKEN: 0.5,
 } as const;
 
 export type ResolvedScoring = {
@@ -27,12 +29,25 @@ export type ResolvedScoring = {
     gapPenalty: number;
     prefixBonus: number;
     exactBonus: number;
-    initialConsonantPenalty: number;
     targetLengthPenalty: number;
+    lengthPenaltyCap: number;
+    choseongWeaken: number;
     getBonus: (graphemeIndex: number) => number;
 };
 
 const NO_BONUS = () => 0;
+
+// 0 이상 정수로 clamp. non-finite 이면 기본값.
+function resolveLengthPenaltyCap(v: number | undefined): number {
+    if (v === undefined || !Number.isFinite(v)) return SCORING.LENGTH_PENALTY_CAP;
+    return Math.max(0, Math.floor(v));
+}
+
+// (0, 1] 범위로 clamp. non-finite 또는 0 이하면 기본값, 1 초과는 1 로.
+function resolveChoseongWeaken(v: number | undefined): number {
+    if (v === undefined || !Number.isFinite(v) || v <= 0) return SCORING.CHOSEONG_WEAKEN;
+    return v > 1 ? 1 : v;
+}
 
 export function resolveScoring(config: ScoringConfig | undefined, target: Target): ResolvedScoring {
     const w = config?.weights;
@@ -52,8 +67,9 @@ export function resolveScoring(config: ScoringConfig | undefined, target: Target
         gapPenalty: w?.gapPenalty ?? SCORING.GAP_PENALTY,
         prefixBonus: w?.prefixBonus ?? SCORING.PREFIX_BONUS,
         exactBonus: w?.exactBonus ?? SCORING.EXACT_BONUS,
-        initialConsonantPenalty: w?.initialConsonantPenalty ?? SCORING.INITIAL_CONSONANT_PENALTY,
         targetLengthPenalty: w?.targetLengthPenalty ?? SCORING.TARGET_LENGTH_PENALTY,
+        lengthPenaltyCap: resolveLengthPenaltyCap(w?.lengthPenaltyCap),
+        choseongWeaken: resolveChoseongWeaken(w?.choseongWeaken),
         getBonus,
     };
 }
