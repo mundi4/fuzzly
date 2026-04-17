@@ -299,6 +299,36 @@ describe("matchBest", () => {
             expect(r1.score! - r2.score!).toBeLessThanOrEqual(4);
         });
     });
+
+    describe("Pareto frontier DP", () => {
+        it("runLen 큰 경로가 이후 consecutive 전이에서 역전 (비-Pareto 구현은 놓침)", () => {
+            // 같은 (qi=1, ci for 'b') 에 도달하는 두 경로:
+            //   A (gap): a@0 (positionZero +100) → gap×3 (−9) → b@4. score=91, runLen=1.
+            //   B (consecutive): a@3 (+0) → b@4 consecutive. score=0+20×2=40, runLen=2.
+            // 초기 score 는 A 가 51 더 높지만 runLen 은 B 가 1 더 크다.
+            // 이후 c→d→e 세 번의 consecutive 전이에서 runLen 삼각 보너스가 누적되면
+            //   A: 91 → 131 → 191 → 271  (runLen 2,3,4)
+            //   B: 40 → 100 → 180 → 280  (runLen 3,4,5)
+            // qi=4 에서 B 가 역전. 비-Pareto 구현은 qi=1 에서 A 만 남겨 B 를 잃고 suboptimal.
+            const q = buildQuery("abcde");
+            const t = preprocessTarget("a_xabcde");
+            const r = matchBest(q, t)!;
+            expect(r).not.toBeNull();
+            // Pareto 구현: a@3 부터 5-run. indices [3,4,5,6,7].
+            // 비-Pareto: a@0 + gap + 4-run. indices [0,4,5,6,7].
+            expect(r.indices).toEqual([3, 4, 5, 6, 7]);
+        });
+
+        it("역방향 케이스: score 우위가 충분하면 Pareto 에서도 score 경로가 유지", () => {
+            // 위 시나리오에서 Q=2 면 consecutive 누적이 부족해 score 우위가 유지됨.
+            // (91,1) 이 최종 선택되어야 함.
+            const q = buildQuery("ab");
+            const t = preprocessTarget("a_xab");
+            const r = matchBest(q, t)!;
+            expect(r).not.toBeNull();
+            expect(r.indices).toEqual([0, 4]);
+        });
+    });
 });
 
 describe("Searcher 스코어 정렬", () => {

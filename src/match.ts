@@ -385,6 +385,40 @@ function isHangulChoseongOnly(qg: QueryGrapheme): boolean {
     return firstCode >= 0x3131 && firstCode <= 0x3163;
 }
 
+// DP 상태의 Pareto 엔트리. (score, runLen) 둘 다 미래 전이에서 의미를 가짐:
+// score 는 현재 누적 점수, runLen 은 이 상태에서 이어지는 consecutive 전이가 얻을 삼각수 보너스 크기 결정.
+// 한쪽이 다른 쪽을 모든 차원에서 지배하지 않는 한 둘 다 보존해야 최적성 보장.
+type FrontierEntry = {
+    score: number;
+    runLen: number;
+    parentPci: number;
+    parentFIdx: number;
+};
+
+// consMap 엔트리 — endTgi 별로 Pareto-dedup된 (score, runLen) 집합.
+type ConsPred = {
+    score: number;
+    runLen: number;
+    pci: number;
+    fIdx: number;
+};
+
+// Pareto insert: 기존 엔트리 중 ne 를 지배하면 reject, ne 가 지배하는 것은 제거.
+// 동점 (score, runLen 완전 동일) 은 중복 방지로 reject.
+function insertPareto<T extends { score: number; runLen: number }>(arr: T[], ne: T): void {
+    for (let i = arr.length - 1; i >= 0; i--) {
+        const e = arr[i];
+        if (e.score >= ne.score && e.runLen >= ne.runLen) {
+            return;
+        }
+        if (ne.score >= e.score && ne.runLen >= e.runLen) {
+            arr[i] = arr[arr.length - 1];
+            arr.pop();
+        }
+    }
+    arr.push(ne);
+}
+
 // 후보의 위치 점수 (경계 보너스, 위치 0 보너스, per-grapheme bonus)
 // 한글 초성-only 쿼리 grapheme이면 positionZero/boundary 기여는 sc.choseongWeaken 배수로 축약.
 function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring, isChoseongOnly: boolean): number {
@@ -436,141 +470,168 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         allCandidates.push(candidates);
     }
 
-    // Phase 2: DP — dp[qi][ci] = qi번째 쿼리 grapheme에 ci번째 후보를 사용할 때 최대 스코어
-    // 전이 최적화: 중첩 루프 대신 prefix-max sweep으로 O(Q×C) 전이
-    // runLen: 현재 (qi, ci) 상태에 도달했을 때의 run 길이 (candidate 연쇄 개수).
-    // 삼각수 연속 보너스를 위해 각 DP 엔트리마다 runLen을 함께 추적한다.
-    const dpScores: number[][] = [];
-    const dpParents: number[][] = [];
-    const dpRunLens: number[][] = [];
+    // Phase 2: DP — dpFrontier[qi][ci] = (qi, ci) 상태의 Pareto 최적 (score, runLen) 집합.
+    // 삼각수 연속 보너스가 prev.runLen 에 의존하므로, 동일 상태에서
+    //   (score 낮지만 runLen 큰) 경로와 (score 높지만 runLen=1인) 경로가
+    //   후속 consecutive 전이에서 역전될 수 있어 둘 다 보존 필요.
+    const dpFrontier: FrontierEntry[][][] = [];
 
-    // qi = 0 초기화 — 모든 entry의 runLen = 1
-    const firstScores: number[] = [];
-    const firstParents: number[] = [];
-    const firstRunLens: number[] = [];
+    // qi = 0 초기화
+    const firstFrontier: FrontierEntry[][] = [];
     const firstIsChoseongOnly = isHangulChoseongOnly(qGraphemes[0]);
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
-        firstScores.push(candidatePositionScore(allCandidates[0][ci], target, sc, firstIsChoseongOnly));
-        firstParents.push(-1);
-        firstRunLens.push(1);
+        firstFrontier.push([
+            {
+                score: candidatePositionScore(allCandidates[0][ci], target, sc, firstIsChoseongOnly),
+                runLen: 1,
+                parentPci: -1,
+                parentFIdx: -1,
+            },
+        ]);
     }
-    dpScores.push(firstScores);
-    dpParents.push(firstParents);
-    dpRunLens.push(firstRunLens);
+    dpFrontier.push(firstFrontier);
 
     for (let qi = 1; qi < Q; qi++) {
         const currCandidates = allCandidates[qi];
         const prevCands = allCandidates[qi - 1];
-        const prevScoresArr = dpScores[qi - 1];
-        const prevRunLensArr = dpRunLens[qi - 1];
+        const prevFrontier = dpFrontier[qi - 1];
         const isChoseongOnly = isHangulChoseongOnly(qGraphemes[qi]);
-        const currScores: number[] = [];
-        const currParent: number[] = [];
-        const currRunLens: number[] = [];
+        const currFrontier: FrontierEntry[][] = [];
 
-        // 전처리: 유효한 predecessor를 endTgi 순으로 수집
-        const preds: { endTgi: number; score: number; gapVal: number; pci: number; runLen: number }[] = [];
+        // gap 전이는 runLen 을 1로 리셋하므로 각 prev pci 당 max-score 엔트리만 필요.
+        // endTgi 순으로 정렬 후 prefix-max sweep.
+        type GapPred = { endTgi: number; gapVal: number; pci: number; fIdx: number };
+        const gapPreds: GapPred[] = [];
         for (let pci = 0; pci < prevCands.length; pci++) {
-            const s = prevScoresArr[pci];
-            if (s === -Infinity) continue;
-            const e = prevCands[pci].endTgi;
-            preds.push({
-                endTgi: e,
-                score: s,
-                gapVal: s - sc.gapPenalty * e,
-                pci,
-                runLen: prevRunLensArr[pci],
-            });
+            const frontier = prevFrontier[pci];
+            if (frontier.length === 0) continue;
+            let maxScore = -Infinity;
+            let maxFIdx = -1;
+            for (let f = 0; f < frontier.length; f++) {
+                if (frontier[f].score > maxScore) {
+                    maxScore = frontier[f].score;
+                    maxFIdx = f;
+                }
+            }
+            if (maxScore > -Infinity) {
+                const e = prevCands[pci].endTgi;
+                gapPreds.push({
+                    endTgi: e,
+                    gapVal: maxScore - sc.gapPenalty * e,
+                    pci,
+                    fIdx: maxFIdx,
+                });
+            }
         }
-        preds.sort((a, b) => a.endTgi - b.endTgi);
+        gapPreds.sort((a, b) => a.endTgi - b.endTgi);
 
-        // consecutive lookup: endTgi → 해당 endTgi에서 최대 (score + consecutive × runLen)
-        // 삼각수 체계: consecutive 전이 시 `sc.consecutive × prev.runLen` 가산.
-        // 동점(total 같음)이면 runLen 큰 것 우선 (미래 전이에서 더 큰 보너스 획득).
-        const consMap = new Map<number, { total: number; pci: number; prevRunLen: number }>();
-        for (const p of preds) {
-            const total = p.score + sc.consecutive * p.runLen;
-            const existing = consMap.get(p.endTgi);
-            if (!existing || total > existing.total || (total === existing.total && p.runLen > existing.prevRunLen)) {
-                consMap.set(p.endTgi, { total, pci: p.pci, prevRunLen: p.runLen });
+        // consMap: endTgi → Pareto-dedup된 (score, runLen, pci, fIdx) 집합.
+        // 같은 endTgi 에 여러 pci 가 있을 수 있고, 같은 pci 안에서도 frontier 여러 엔트리가 있을 수 있음.
+        const consMap = new Map<number, ConsPred[]>();
+        for (let pci = 0; pci < prevCands.length; pci++) {
+            const frontier = prevFrontier[pci];
+            if (frontier.length === 0) continue;
+            const e = prevCands[pci].endTgi;
+            let arr = consMap.get(e);
+            if (!arr) {
+                arr = [];
+                consMap.set(e, arr);
+            }
+            for (let f = 0; f < frontier.length; f++) {
+                const fe = frontier[f];
+                insertPareto(arr, { score: fe.score, runLen: fe.runLen, pci, fIdx: f });
             }
         }
 
-        // gap sweep: currCandidates는 startTgi 순이므로 pointer 한 방향 전진
+        // gap sweep state
         let gapScanPos = -1;
         let gapBestVal = -Infinity;
         let gapBestPci = -1;
+        let gapBestFIdx = -1;
 
         for (let ci = 0; ci < currCandidates.length; ci++) {
-            const s = currCandidates[ci].startTgi;
-            let bestScore = -Infinity;
-            let bestPredIdx = -1;
-            let bestNewRunLen = 1;
+            const c = currCandidates[ci];
+            const s = c.startTgi;
+            const posScore = candidatePositionScore(c, target, sc, isChoseongOnly);
+            const frontier: FrontierEntry[] = [];
 
-            // gap: endTgi <= s-2인 predecessor의 누적 최대 gapVal
+            // Gap 전이: endTgi ≤ s-2. runLen 은 1로 리셋.
             const gapThreshold = s - 2;
-            while (gapScanPos + 1 < preds.length && preds[gapScanPos + 1].endTgi <= gapThreshold) {
+            while (gapScanPos + 1 < gapPreds.length && gapPreds[gapScanPos + 1].endTgi <= gapThreshold) {
                 gapScanPos++;
-                if (preds[gapScanPos].gapVal > gapBestVal) {
-                    gapBestVal = preds[gapScanPos].gapVal;
-                    gapBestPci = preds[gapScanPos].pci;
+                if (gapPreds[gapScanPos].gapVal > gapBestVal) {
+                    gapBestVal = gapPreds[gapScanPos].gapVal;
+                    gapBestPci = gapPreds[gapScanPos].pci;
+                    gapBestFIdx = gapPreds[gapScanPos].fIdx;
                 }
             }
             if (gapBestVal > -Infinity) {
                 const gapTotal = gapBestVal + sc.gapPenalty * (s - 1);
-                bestScore = gapTotal;
-                bestPredIdx = gapBestPci;
-                bestNewRunLen = 1;
+                insertPareto(frontier, {
+                    score: gapTotal + posScore,
+                    runLen: 1,
+                    parentPci: gapBestPci,
+                    parentFIdx: gapBestFIdx,
+                });
             }
 
-            // consecutive: endTgi === s-1
-            const consEntry = consMap.get(s - 1);
-            if (consEntry && consEntry.total > bestScore) {
-                bestScore = consEntry.total;
-                bestPredIdx = consEntry.pci;
-                bestNewRunLen = consEntry.prevRunLen + 1;
+            // Consecutive 전이: endTgi === s-1. 각 consMap entry 에 대해 (score + α×newRunLen, newRunLen).
+            const consFrontier = consMap.get(s - 1);
+            if (consFrontier) {
+                for (let i = 0; i < consFrontier.length; i++) {
+                    const e = consFrontier[i];
+                    const newRunLen = e.runLen + 1;
+                    insertPareto(frontier, {
+                        score: e.score + sc.consecutive * newRunLen + posScore,
+                        runLen: newRunLen,
+                        parentPci: e.pci,
+                        parentFIdx: e.fIdx,
+                    });
+                }
             }
 
-            if (bestPredIdx === -1) {
-                currScores.push(-Infinity);
-                currParent.push(-1);
-                currRunLens.push(1);
-            } else {
-                currScores.push(bestScore + candidatePositionScore(currCandidates[ci], target, sc, isChoseongOnly));
-                currParent.push(bestPredIdx);
-                currRunLens.push(bestNewRunLen);
-            }
+            currFrontier.push(frontier);
         }
 
-        dpScores.push(currScores);
-        dpParents.push(currParent);
-        dpRunLens.push(currRunLens);
+        dpFrontier.push(currFrontier);
     }
 
-    // Phase 3: 최적 종점 찾기
-    const lastScores = dpScores[Q - 1];
+    // Phase 3: 최적 종점 선택. score 최대, 동점이면 runLen 큰 쪽 (결정성).
     let bestFinalScore = -Infinity;
-    let bestFinalIdx = -1;
-    for (let ci = 0; ci < lastScores.length; ci++) {
-        if (lastScores[ci] > bestFinalScore) {
-            bestFinalScore = lastScores[ci];
-            bestFinalIdx = ci;
+    let bestFinalRunLen = -1;
+    let bestFinalCi = -1;
+    let bestFinalFIdx = -1;
+    const lastFrontier = dpFrontier[Q - 1];
+    for (let ci = 0; ci < lastFrontier.length; ci++) {
+        const frontier = lastFrontier[ci];
+        for (let f = 0; f < frontier.length; f++) {
+            const e = frontier[f];
+            if (e.score > bestFinalScore || (e.score === bestFinalScore && e.runLen > bestFinalRunLen)) {
+                bestFinalScore = e.score;
+                bestFinalRunLen = e.runLen;
+                bestFinalCi = ci;
+                bestFinalFIdx = f;
+            }
         }
     }
 
-    if (bestFinalIdx === -1 || bestFinalScore === -Infinity) return null;
+    if (bestFinalCi === -1 || bestFinalScore === -Infinity) return null;
 
-    // Phase 4: 백트래킹 — 최적 경로 복원
-    const chosen: number[] = new Array(Q);
-    chosen[Q - 1] = bestFinalIdx;
-    for (let qi = Q - 2; qi >= 0; qi--) {
-        chosen[qi] = dpParents[qi + 1][chosen[qi + 1]];
+    // Phase 4: 백트래킹 — frontier entry 의 parentPci/parentFIdx 체인 복원
+    const chosenCi = new Array<number>(Q);
+    const chosenFIdx = new Array<number>(Q);
+    chosenCi[Q - 1] = bestFinalCi;
+    chosenFIdx[Q - 1] = bestFinalFIdx;
+    for (let qi = Q - 1; qi > 0; qi--) {
+        const entry = dpFrontier[qi][chosenCi[qi]][chosenFIdx[qi]];
+        chosenCi[qi - 1] = entry.parentPci;
+        chosenFIdx[qi - 1] = entry.parentFIdx;
     }
 
     // 모든 매칭 인덱스 수집
     const allIndices: number[] = [];
     for (let qi = 0; qi < Q; qi++) {
-        const candidate = allCandidates[qi][chosen[qi]];
+        const candidate = allCandidates[qi][chosenCi[qi]];
         for (const idx of candidate.indices) {
             allIndices.push(idx);
         }

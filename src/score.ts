@@ -37,6 +37,18 @@ export type ResolvedScoring = {
 
 const NO_BONUS = () => 0;
 
+// 0 이상 정수로 clamp. non-finite 이면 기본값.
+function resolveLengthPenaltyCap(v: number | undefined): number {
+    if (v === undefined || !Number.isFinite(v)) return SCORING.LENGTH_PENALTY_CAP;
+    return Math.max(0, Math.floor(v));
+}
+
+// (0, 1] 범위로 clamp. non-finite 또는 0 이하면 기본값, 1 초과는 1 로.
+function resolveChoseongWeaken(v: number | undefined): number {
+    if (v === undefined || !Number.isFinite(v) || v <= 0) return SCORING.CHOSEONG_WEAKEN;
+    return v > 1 ? 1 : v;
+}
+
 export function resolveScoring(config: ScoringConfig | undefined, target: Target): ResolvedScoring {
     const w = config?.weights;
     const gb = config?.graphemeBonus;
@@ -56,8 +68,8 @@ export function resolveScoring(config: ScoringConfig | undefined, target: Target
         prefixBonus: w?.prefixBonus ?? SCORING.PREFIX_BONUS,
         exactBonus: w?.exactBonus ?? SCORING.EXACT_BONUS,
         targetLengthPenalty: w?.targetLengthPenalty ?? SCORING.TARGET_LENGTH_PENALTY,
-        lengthPenaltyCap: w?.lengthPenaltyCap ?? SCORING.LENGTH_PENALTY_CAP,
-        choseongWeaken: w?.choseongWeaken ?? SCORING.CHOSEONG_WEAKEN,
+        lengthPenaltyCap: resolveLengthPenaltyCap(w?.lengthPenaltyCap),
+        choseongWeaken: resolveChoseongWeaken(w?.choseongWeaken),
         getBonus,
     };
 }

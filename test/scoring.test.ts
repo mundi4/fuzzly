@@ -57,6 +57,65 @@ describe("ScoringConfig - weights override", () => {
     });
 });
 
+describe("ScoringConfig - 신규 가중치 clamp", () => {
+    it("lengthPenaltyCap 음수 입력은 0으로 clamp (페널티 비활성)", () => {
+        const query = buildQuery("a");
+        const t = preprocessTarget("abcdefghij"); // L=10
+        const rBaseline = matchBest(query, t, { weights: { lengthPenaltyCap: 0 } })!;
+        const rNegative = matchBest(query, t, { weights: { lengthPenaltyCap: -5 } })!;
+        // 음수 → 0으로 clamp. cap=0 과 동일 결과.
+        expect(rNegative.score).toBe(rBaseline.score);
+    });
+
+    it("lengthPenaltyCap 소수 입력은 floor 처리", () => {
+        const query = buildQuery("a");
+        const t = preprocessTarget("abcdefghij"); // L=10
+        const rInt = matchBest(query, t, { weights: { lengthPenaltyCap: 5 } })!;
+        const rFloat = matchBest(query, t, { weights: { lengthPenaltyCap: 5.9 } })!;
+        // 5.9 → 5 로 floor. cap=5 와 동일.
+        expect(rFloat.score).toBe(rInt.score);
+    });
+
+    it("lengthPenaltyCap NaN/Infinity는 기본값 fallback", () => {
+        const query = buildQuery("a");
+        const t = preprocessTarget("abcdefghij");
+        const rDefault = matchBest(query, t)!;
+        const rNaN = matchBest(query, t, { weights: { lengthPenaltyCap: Number.NaN } })!;
+        const rInf = matchBest(query, t, { weights: { lengthPenaltyCap: Number.POSITIVE_INFINITY } })!;
+        expect(rNaN.score).toBe(rDefault.score);
+        expect(rInf.score).toBe(rDefault.score);
+    });
+
+    it("choseongWeaken 0 이하는 기본값 fallback", () => {
+        const q = buildQuery("ㅈ");
+        const t = preprocessTarget("정의");
+        const rDefault = matchBest(q, t)!;
+        const rZero = matchBest(q, t, { weights: { choseongWeaken: 0 } })!;
+        const rNeg = matchBest(q, t, { weights: { choseongWeaken: -0.5 } })!;
+        // 0, 음수 모두 기본값(0.5)으로 fallback
+        expect(rZero.score).toBe(rDefault.score);
+        expect(rNeg.score).toBe(rDefault.score);
+    });
+
+    it("choseongWeaken 1 초과는 1 로 clamp", () => {
+        const q = buildQuery("ㅈ");
+        const t = preprocessTarget("정의");
+        const rOne = matchBest(q, t, { weights: { choseongWeaken: 1 } })!;
+        const rBig = matchBest(q, t, { weights: { choseongWeaken: 10 } })!;
+        expect(rBig.score).toBe(rOne.score);
+    });
+
+    it("choseongWeaken NaN/Infinity는 기본값 fallback", () => {
+        const q = buildQuery("ㅈ");
+        const t = preprocessTarget("정의");
+        const rDefault = matchBest(q, t)!;
+        const rNaN = matchBest(q, t, { weights: { choseongWeaken: Number.NaN } })!;
+        const rInf = matchBest(q, t, { weights: { choseongWeaken: Number.POSITIVE_INFINITY } })!;
+        expect(rNaN.score).toBe(rDefault.score);
+        expect(rInf.score).toBe(rDefault.score);
+    });
+});
+
 describe("ScoringConfig - graphemeBonus (배열)", () => {
     it("특정 위치에 bonus 부여", () => {
         const query = buildQuery("하");
