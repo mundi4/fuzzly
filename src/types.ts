@@ -54,6 +54,16 @@ export interface Query {
      * (createSearcher의 세션 최적화).
      */
     atoms: string;
+    /**
+     * grapheme i → 원본 입력의 UTF-16 시작 문자 위치.
+     * `composingIndex`(char index)를 grapheme 인덱스로 변환할 때 사용한다.
+     */
+    charIndexes: Uint16Array;
+    /**
+     * UTF-16 문자 위치 → grapheme 인덱스 매핑.
+     * multi-codepoint cluster 내의 모든 문자가 같은 grapheme 인덱스를 가리킨다.
+     */
+    graphemeIndexes: Uint16Array;
 }
 
 /**
@@ -158,7 +168,29 @@ export type ScoringWeights = {
     targetLengthPenalty?: number;
     lengthPenaltyCap?: number;
     choseongWeaken?: number;
+    /**
+     * 종성이 anchor grapheme 밖으로 spill된 candidate에 가산되는 페널티.
+     * **`spillMode === "always"` 일 때만 적용된다.** 다른 spillMode에서는
+     * tail spill 자체가 차단되어 이 값과 무관하게 동작한다.
+     */
+    tailSpillPenalty?: number;
 };
+
+/**
+ * finalized(확정된) grapheme에 대한 구조 매치 엄격성 정책.
+ *
+ * - `"always"`: 모든 grapheme을 조합중처럼 취급 (기존 동작, 모든 tail spill 허용)
+ * - `"composing"`: 호출 시 넘긴 `composingIndex`가 가리키는 grapheme만 관대하게 매칭. 없으면 전부 엄격
+ * - `"composingOrLast"`: `composingIndex` 명시 시 그것만, `undefined`면 마지막 grapheme 추정,
+ *   `null`이면 아무것도 조합중 아님 (명시적 none, 공백 뒤 trim 케이스)
+ *
+ * Finalized + 모음 포함 grapheme은 anchor target grapheme과 atom 시퀀스가
+ * 정확히 일치해야 매치된다 (tail spill 금지 + anchor 잉여 atom 금지).
+ *
+ * `composingIndex`는 쿼리 문자열의 UTF-16 인덱스이며 호출 시점마다 변하는 상태이므로
+ * `SearchOptions`에 포함되지 않고 `search()` 함수의 별도 인자로 전달한다.
+ */
+export type SpillMode = "always" | "composing" | "composingOrLast";
 
 export type ScoringConfig = {
     weights?: ScoringWeights;
@@ -174,6 +206,8 @@ export type SearchOptions = {
     literal?: boolean;
     score?: (result: MatchResult, target: Target) => number;
     scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
+    /** finalized 구조 엄격성 정책. 기본값: `"composingOrLast"` */
+    spillMode?: SpillMode;
 };
 
 export type SearchResult<T = string> = {
@@ -185,7 +219,13 @@ export type SearchResult<T = string> = {
 };
 
 export interface Searcher<T = string> {
-    search(queryInput: string, options?: SearchOptions): SearchResult<T>[];
+    /**
+     * @param queryInput - 쿼리 문자열
+     * @param options - 검색 옵션 (limit, spillMode 등)
+     * @param composingIndex - 조합중인 char의 UTF-16 인덱스 (상태; 매 호출 변함).
+     *   `number` = 해당 위치 grapheme 조합중 / `null` = 명시적 없음 / `undefined` = 모름
+     */
+    search(queryInput: string, options?: SearchOptions, composingIndex?: number | null): SearchResult<T>[];
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;

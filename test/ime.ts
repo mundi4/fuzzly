@@ -227,17 +227,32 @@ function step(finalized: string, composing: Composing, atom: string): StepResult
 }
 
 /**
- * 키스트로크(원자) 배열을 받아, 각 키 입력 직후의 화면 상태를 순서대로 반환한다.
+ * 타이핑 journey의 한 단계. `state`는 화면에 표시되는 문자열,
+ * `composingIndex`는 조합중인 char의 UTF-16 인덱스 (조합중이 아니면 `null`).
  */
-export function typingStates(keystrokes: string[]): string[] {
-    const states: string[] = [];
+export type JourneyStep = { state: string; composingIndex: number | null };
+
+/**
+ * 키스트로크(원자) 배열을 받아, 각 키 입력 직후의 화면 상태 + composingIndex를 순서대로 반환한다.
+ */
+export function typingJourney(keystrokes: string[]): JourneyStep[] {
+    const steps: JourneyStep[] = [];
     let finalized = "";
     let composing: Composing = null;
     for (const atom of keystrokes) {
         ({ finalized, composing } = step(finalized, composing, atom));
-        states.push(finalized + renderComposing(composing));
+        const state = finalized + renderComposing(composing);
+        const composingIndex = composing === null ? null : finalized.length;
+        steps.push({ state, composingIndex });
     }
-    return states;
+    return steps;
+}
+
+/**
+ * 키스트로크(원자) 배열을 받아, 각 키 입력 직후의 화면 상태를 순서대로 반환한다.
+ */
+export function typingStates(keystrokes: string[]): string[] {
+    return typingJourney(keystrokes).map((s) => s.state);
 }
 
 /**
@@ -261,9 +276,17 @@ export function queryToKeystrokes(finalQuery: string): string[] {
 }
 
 /**
+ * 최종 쿼리 문자열로부터 "이 문자열을 만들기까지 매 키스트로크마다 보이는 상태 + composingIndex"를
+ * 계산한다. 마지막 원소의 state는 `finalQuery`와 같다.
+ */
+export function journeyWithComposingFrom(finalQuery: string): JourneyStep[] {
+    return typingJourney(queryToKeystrokes(finalQuery));
+}
+
+/**
  * 최종 쿼리 문자열로부터 "이 문자열을 만들기까지 매 키스트로크마다 보이는 상태" 시퀀스를
  * 계산한다. journeyFrom(q)의 마지막 원소는 q와 같아야 한다.
  */
 export function journeyFrom(finalQuery: string): string[] {
-    return typingStates(queryToKeystrokes(finalQuery));
+    return journeyWithComposingFrom(finalQuery).map((s) => s.state);
 }

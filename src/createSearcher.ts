@@ -2,7 +2,7 @@ import { buildMatchRanges } from "./buildMatchRanges";
 import { buildQuery } from "./buildQuery";
 import { matchBest, matchLiteral } from "./match";
 import { preprocessTarget } from "./preprocessTarget";
-import type { MatchResult, Searcher, SearcherOptions, SearchOptions, SearchResult, Target } from "./types";
+import type { MatchResult, Searcher, SearcherOptions, SearchOptions, SearchResult, SpillMode, Target } from "./types";
 
 // ---------------------------------------------------------------------------
 // Min-heap (score 오름차순) — limit > 0일 때 상위 N개만 유지
@@ -41,8 +41,11 @@ function heapReplace<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
  * 검색 인스턴스를 생성한다. 아이템 목록을 내부에 보관하고
  * `search()` 호출마다 `matchBest`로 최적 매칭+스코어링을 수행한다.
  *
- * IME 입력 시 세션 최적화: 이전 쿼리의 atom prefix 확장이면
+ * **IME 입력 세션 최적화**: 이전 쿼리의 atom prefix 확장이면
  * 이전에 매치된 아이템만 재검색하여 성능을 높인다.
+ * `spillMode` 또는 `composingIndex`가 직전 호출과 달라지면 세션이 자동 단절되어 전체 재탐색한다.
+ *
+ * **spillMode/composingIndex 사용 패턴**은 {@link Searcher.search}와 {@link match} JSDoc 참조.
  *
  * @param items - 검색 대상 아이템 목록
  * @param options - T가 string이 아니면 `key` 함수 필수
@@ -72,19 +75,24 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
     // 세션 상태: 이전 쿼리의 atom 시퀀스, 매칭 모드, 매치된 엔트리 인덱스 배열
     let prevAtoms = "";
     let prevLiteral = false;
+    let prevSpillMode: SpillMode | undefined;
+    let prevComposingIndex: number | null | undefined;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevAtoms = "";
         prevLiteral = false;
+        prevSpillMode = undefined;
+        prevComposingIndex = undefined;
         prevMatchedIndices = null;
     }
 
     return {
-        search(queryInput: string, searchOpts: SearchOptions = {}): SearchResult<T>[] {
+        search(queryInput: string, searchOpts: SearchOptions = {}, composingIndex?: number | null): SearchResult<T>[] {
             const scoreFn = searchOpts.score;
             const limit = searchOpts.limit ?? 0;
             const scoringOpt = searchOpts.scoring;
+            const spillMode = searchOpts.spillMode;
             const resolveScoringConfig =
                 typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
 
@@ -93,13 +101,15 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
             // 현재 atoms가 이전 atoms의 확장인가?
-            // 매칭 모드(literal/fuzzy)가 다르면 세션 단절
+            // 매칭 모드(literal/fuzzy)나 spillMode/composingIndex 상태가 달라지면 세션 단절
             const currentLiteral = !!searchOpts.literal;
             const sessionIndices =
                 prevAtoms.length > 0 &&
                 currentAtoms.length > prevAtoms.length &&
                 currentAtoms.startsWith(prevAtoms) &&
                 prevLiteral === currentLiteral &&
+                prevSpillMode === spillMode &&
+                prevComposingIndex === composingIndex &&
                 prevMatchedIndices !== null
                     ? prevMatchedIndices
                     : null;
@@ -117,7 +127,13 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 for (const i of scan) {
                     const t = entries[i].target;
                     const result = query
-                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined)
+                        ? matchBest(
+                              query,
+                              t,
+                              resolveScoringConfig ? resolveScoringConfig(t) : undefined,
+                              composingIndex,
+                              spillMode,
+                          )
                         : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
@@ -146,7 +162,13 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 for (const i of scan) {
                     const t = entries[i].target;
                     const result = query
-                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined)
+                        ? matchBest(
+                              query,
+                              t,
+                              resolveScoringConfig ? resolveScoringConfig(t) : undefined,
+                              composingIndex,
+                              spillMode,
+                          )
                         : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
@@ -161,6 +183,8 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
             prevAtoms = currentAtoms;
             prevLiteral = currentLiteral;
+            prevSpillMode = spillMode;
+            prevComposingIndex = composingIndex;
             prevMatchedIndices = matchedIndices;
 
             return results;

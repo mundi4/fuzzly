@@ -229,6 +229,52 @@ describe("createGraphemeBonuses", () => {
     });
 });
 
+describe("ScoringConfig - tailSpillPenalty", () => {
+    it("완전 그래핌 매치를 spill 매치보다 선호 (엣지 케이스)", () => {
+        const query = buildQuery("제2절");
+        const exact = preprocessTarget("제2절");
+        const spilled = preprocessTarget("제2전라");
+        const rExact = matchBest(query, exact)!;
+        const rSpilled = matchBest(query, spilled)!;
+        expect(rExact.score!).toBeGreaterThan(rSpilled.score!);
+    });
+
+    it("tailSpillPenalty=0이면 엣지 케이스 동률/역전 허용", () => {
+        const query = buildQuery("제2절");
+        const exact = preprocessTarget("제2절");
+        const spilled = preprocessTarget("제2전라");
+        const scoring: ScoringConfig = { weights: { tailSpillPenalty: 0 } };
+        const rExact = matchBest(query, exact, scoring)!;
+        const rSpilled = matchBest(query, spilled, scoring)!;
+        // 페널티 없이는 1점 차이로 거의 동률
+        expect(Math.abs(rExact.score! - rSpilled.score!)).toBeLessThanOrEqual(2);
+    });
+
+    it("주요 시나리오: 제2절 vs 제2전 라이터", () => {
+        const query = buildQuery("제2절");
+        const rExact = matchBest(query, preprocessTarget("제2절"))!;
+        const rSpilled = matchBest(query, preprocessTarget("제2전 라이터"))!;
+        expect(rExact.score!).toBeGreaterThan(rSpilled.score!);
+    });
+
+    it("tail 없는 쿼리는 페널티 영향 없음", () => {
+        const query = buildQuery("제");
+        const target = preprocessTarget("제안");
+        const rDefault = matchBest(query, target)!;
+        const rZero = matchBest(query, target, { weights: { tailSpillPenalty: 0 } })!;
+        expect(rDefault.score).toBe(rZero.score);
+    });
+
+    it("오버라이드 값만큼 정확히 차이 (spillMode=always)", () => {
+        // tailSpillPenalty는 spillMode === "always"일 때만 적용된다.
+        const query = buildQuery("절");
+        const target = preprocessTarget("전라");
+        const r0 = matchBest(query, target, { weights: { tailSpillPenalty: 0 } }, undefined, "always")!;
+        const rNeg = matchBest(query, target, { weights: { tailSpillPenalty: -100 } }, undefined, "always")!;
+        expect(r0.score! - rNeg.score!).toBe(100);
+    });
+});
+
 describe("createSearcher - scoring option", () => {
     it("static ScoringConfig 전달", () => {
         const searcher = createSearcher(["안녕하세요", "안부", "안심"]);

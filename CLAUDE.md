@@ -40,6 +40,10 @@ charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeE
 
 grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 
+### Query 레이아웃
+
+`buildQuery(input)` → `Query`. 분해된 `graphemes: QueryGrapheme[]`와 함께 `charIndexes`/`graphemeIndexes`(Uint16Array)를 보유한다. 이 매핑은 caller가 넘긴 `composingIndex`(UTF-16 char index)를 grapheme 인덱스로 변환하는 데 사용된다. 65535자 초과 시 `RangeError`.
+
 ### IDB 직렬화
 
 Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClone/IDB 직접 저장 가능.
@@ -52,22 +56,49 @@ Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClo
 
 핵심 규칙:
 - **vowel-sticks-to-lead**: 쿼리 모음은 초성이 매치된 타겟 음절 안에서만 소비
-- 종성은 이후 음절로 자유롭게 넘어감 (자음 자리만)
+- 종성 spill은 **spillMode 정책**에 따름 (아래 섹션) — 조합중 grapheme에서만 허용, finalized grapheme은 anchor 내부로 제한
 - 모음은 절대 spill하지 않음
 - `matchBest` DP: candidate 수집 → Pareto frontier → gap/consecutive sweep → backtrack
+
+### spillMode / composingIndex (IME composing 기반 finalized 엄격성)
+
+**원리**: 사용자가 모음까지 친 finalized grapheme은 "이 음절을 완성하려는 의도"로 간주. 해당 grapheme은 타겟 anchor와 **구조 매치**(atom 시퀀스 정확히 일치)를 요구. 조합중(composing) grapheme만 기존 관대 매칭(tail spill + anchor 잉여 atom 허용).
+
+결과적으로 쿼리 `"으"`(finalized) ≠ 타겟 `"은"`, `"일"`(finalized) ≠ `"읽"` 등 false positive가 감소한다.
+
+**`SpillMode`** (`SearchOptions.spillMode`, `match`/`matchBest` 5번째 인자):
+| 값 | 동작 |
+|---|---|
+| `"always"` | 모든 grapheme 조합중 취급 (기존 동작, 전부 spill 허용) |
+| `"composing"` | `composingIndex`가 지정한 grapheme만 관대, 없으면 전부 엄격 |
+| `"composingOrLast"` (**기본값**) | `composingIndex` 지정되면 그것만, `undefined`면 마지막 grapheme 자동 추정, `null`이면 모두 엄격 |
+
+**`composingIndex`** (`Searcher.search` 3번째 인자, `match`/`matchBest` 4번째 인자):
+- `number` — 조합중인 char의 UTF-16 인덱스 (예: `compositionupdate` 시점의 `selectionStart`)
+- `null` — 명시적 "조합중 없음" (쿼리 뒤 공백 후 trim 케이스 등 caller가 확정 가능할 때)
+- `undefined` — caller가 모름 → spillMode 기본 동작 적용
+
+`tailSpillPenalty`는 `spillMode === "always"`일 때만 적용된다 (다른 모드에서는 spill 자체가 차단되어 무의미).
+
+초성-only grapheme과 non-Hangul(ASCII, 이모지)은 spillMode 영향을 받지 않는다.
+
+**세션 최적화**: `createSearcher`는 직전 호출 대비 `spillMode`/`composingIndex`가 바뀌면 세션을 자동 리셋한다.
 
 ## Public API (`src/index.ts`)
 
 ```
 buildQuery(input) → Query
 preprocessTarget(input) → Target
-match(query, target) → MatchResult | null
-matchBest(query, target, scoring?) → MatchResult | null (score 포함)
+match(query, target, composingIndex?, spillMode?) → MatchResult | null
+matchBest(query, target, scoring?, composingIndex?, spillMode?) → MatchResult | null (score 포함)
 matchLiteral(literal, target) → MatchResult | null
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 createSearcher(items, opts?) → Searcher (session 최적화 내장)
+  searcher.search(queryInput, options?, composingIndex?)
 hasDynamicAtoms() / snapshotDynamicAtoms() / restoreDynamicAtoms()
 ```
+
+주요 타입: `SpillMode` = `"always" | "composing" | "composingOrLast"` (기본 `"composingOrLast"`).
 
 ## Conventions
 

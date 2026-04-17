@@ -18,5 +18,6 @@ export type {
     SearcherOptions,
     SearchOptions,
     SearchResult,
+    SpillMode,
     Target,
 } from "./types";

@@ -1,18 +1,69 @@
 import { isConsonantLUT } from "./internal/atomRegistry";
 import type { ResolvedScoring } from "./score";
 import { resolveScoring } from "./score";
-import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, Target } from "./types";
+import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, SpillMode, Target } from "./types";
 
 /*
  * 매칭 모델
  * ---------
- * "spillover" 개념은 없다. 쿼리 원자를 타겟 원자 스트림에 순서대로 매칭시키는 게 전부다.
- * 유일한 제약은 **vowel-sticks-to-lead**: 쿼리 한 글자의 모음(중성)은 그 글자의 초성이
- * 매치된 타겟 음절 안에서 바로 이어지는 위치에서만 소비될 수 있다.
+ * 쿼리 원자를 타겟 원자 스트림에 순서대로 매칭한다.
+ *
+ * 기본 제약: **vowel-sticks-to-lead** — 쿼리 grapheme의 모음은 그 grapheme의 초성이
+ * 매치된 타겟 음절 안에서 바로 이어지는 위치에서만 소비된다.
+ *
+ * **spillMode 기반 finalized 구조 엄격성**:
+ * - 조합중(composing) grapheme은 기존대로 tail이 다음 음절로 spill 가능
+ * - 확정(finalized) + 모음 포함 grapheme은 타겟 anchor grapheme과 atom 시퀀스가 정확히 일치해야 함
+ *   (= tail spill 금지 AND anchor 잉여 atom 금지)
  *
  * Atoms = Uint8Array (정수 ID). 비교는 모두 정수 비교.
  * Target은 flat typed array 레이아웃 (atomsFlat, atomStarts, atomLens, vowelIdxs, tailIdxs).
  */
+
+const DEFAULT_SPILL_MODE: SpillMode = "composingOrLast";
+
+// resolveComposingGrapheme 반환 값 sentinel.
+// -2 = 모든 grapheme 조합중 취급 (spillMode === "always")
+// -1 = 아무것도 조합중 아님
+// >=0 = 해당 인덱스의 grapheme만 조합중
+const COMPOSING_ALL = -2;
+const COMPOSING_NONE = -1;
+
+/**
+ * spillMode와 composingIndex(char index)로부터 "어느 grapheme이 조합중인지" 결정.
+ *
+ * @returns -2 (전부) / -1 (없음) / >=0 (특정 grapheme 인덱스)
+ */
+function resolveComposingGrapheme(
+    query: Query,
+    composingIndex: number | null | undefined,
+    spillMode: SpillMode,
+): number {
+    if (spillMode === "always") return COMPOSING_ALL;
+
+    const Q = query.graphemes.length;
+
+    if (typeof composingIndex === "number") {
+        if (composingIndex < 0 || composingIndex >= query.graphemeIndexes.length) {
+            return COMPOSING_NONE;
+        }
+        const gi = query.graphemeIndexes[composingIndex];
+        if (gi >= Q) return COMPOSING_NONE;
+        return gi;
+    }
+
+    if (composingIndex === null) return COMPOSING_NONE;
+
+    // undefined
+    if (spillMode === "composingOrLast" && Q > 0) {
+        return Q - 1;
+    }
+    return COMPOSING_NONE;
+}
+
+function isGraphemeComposing(resolved: number, gi: number): boolean {
+    return resolved === COMPOSING_ALL || resolved === gi;
+}
 
 function buildMatchResult(indices: number[], target: Target, queryGraphemes: QueryGrapheme[]): MatchResult {
     const startsAtZero = indices.length > 0 && indices[0] === 0;
@@ -42,8 +93,31 @@ function buildMatchResult(indices: number[], target: Target, queryGraphemes: Que
 
 /**
  * 탐욕적(greedy) 좌→우 매칭. 첫 번째로 유효한 정렬을 반환한다.
+ *
+ * **매칭 규칙 (spillMode 기반)**:
+ * - **조합중(composing)** grapheme: lead+vowel은 anchor 음절 내부에서 매치, tail은 다음 음절로 spill 가능
+ * - **확정(finalized) + 모음 포함** grapheme: 타겟 anchor와 atom 시퀀스 정확히 일치 필요
+ *   (tail spill 금지 + anchor 잉여 atom 금지). 예: "으"(finalized) ≠ "은", "일"(finalized) ≠ "읽"
+ * - 초성-only grapheme / non-Hangul(ASCII, 이모지)은 spillMode 영향 없음
+ *
+ * @param query - `buildQuery`로 만든 쿼리
+ * @param target - `preprocessTarget`으로 만든 타겟
+ * @param composingIndex - 조합중인 char의 UTF-16 인덱스 (쿼리 문자열 기준).
+ *   - `number`: 해당 위치의 grapheme이 조합중 (browser compositionupdate 시점의 selectionStart 등)
+ *   - `null`: 명시적으로 "조합중 없음" — `composingOrLast`의 last 폴백을 막는다 (예: 쿼리 뒤 공백 뒤 trim)
+ *   - `undefined`: caller가 모름 → spillMode의 기본 동작 적용
+ * @param spillMode - finalized 엄격성 정책 (기본값 `"composingOrLast"`):
+ *   - `"always"`: 모든 grapheme을 조합중 취급 (기존 관대 동작)
+ *   - `"composing"`: composingIndex가 지정한 것만 관대, 없으면 전부 엄격
+ *   - `"composingOrLast"`: composingIndex 지정되면 그것만, 없으면 마지막 grapheme 자동 조합중 가정
+ * @returns 매치되면 `MatchResult`, 아니면 `null`
  */
-export function match(query: Query, target: Target): MatchResult | null {
+export function match(
+    query: Query,
+    target: Target,
+    composingIndex?: number | null,
+    spillMode: SpillMode = DEFAULT_SPILL_MODE,
+): MatchResult | null {
     const qGraphemes = query.graphemes;
     const T = target.graphemeCount;
 
@@ -51,6 +125,8 @@ export function match(query: Query, target: Target): MatchResult | null {
         return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, initialConsonantOnly: false };
     }
     if (qGraphemes.length > T) return null;
+
+    const resolvedComposing = resolveComposingGrapheme(query, composingIndex, spillMode);
 
     const matches: number[] = [];
     let tgi = 0;
@@ -60,6 +136,7 @@ export function match(query: Query, target: Target): MatchResult | null {
         const qAtoms = qg.atoms;
         const qVowelStart = qg.vowelIndex;
         const qTailStart = qg.tailIndex;
+        const isComp = isGraphemeComposing(resolvedComposing, qi);
 
         if (qVowelStart === -1) {
             // 중성 없음
@@ -98,7 +175,23 @@ export function match(query: Query, target: Target): MatchResult | null {
             continue;
         }
 
-        // 중성 있음: lead + vowel은 같은 타겟 음절 안에서 처리
+        if (!isComp) {
+            // 중성 있음 + finalized: 구조 매치 (anchor atom 시퀀스 == 쿼리 grapheme atoms)
+            let anchorTgi = -1;
+            while (tgi < T) {
+                if (atomsEqual(qAtoms, target, tgi)) {
+                    anchorTgi = tgi;
+                    break;
+                }
+                tgi++;
+            }
+            if (anchorTgi === -1) return null;
+            matches.push(anchorTgi);
+            tgi = anchorTgi + 1;
+            continue;
+        }
+
+        // 중성 있음 + composing: lead+vowel은 같은 타겟 음절 안에서, tail은 spill 가능
         const qLeadVowelEnd = qTailStart === -1 ? qAtoms.length : qTailStart;
 
         let anchorTgi = -1;
@@ -137,7 +230,7 @@ export function match(query: Query, target: Target): MatchResult | null {
             continue;
         }
 
-        // 종성 처리
+        // 종성 처리 (spill 허용)
         let curTgi = anchorTgi;
         let tai = target.atomStarts[anchorTgi] + qLeadVowelEnd;
         let lastMatchedTgi = anchorTgi;
@@ -221,10 +314,13 @@ type Candidate = {
     startTgi: number;
     endTgi: number;
     indices: number[];
+    // vowel+tail 쿼리에서 종성 atom이 anchor grapheme 밖으로 넘어간 경우에만 true.
+    // "완전 그래핌 매치"(전 grapheme이 anchor 안에서 소비) 판별용.
+    tailSpilled: boolean;
 };
 
-// 모음 있는 쿼리 grapheme의 모든 anchor 위치 수집
-function findVowelCandidates(qg: QueryGrapheme, target: Target, minTgi: number): Candidate[] {
+// composing grapheme용: 모음 있는 쿼리 grapheme의 모든 anchor 위치 수집 (tail spill 허용)
+function findVowelCandidatesComposing(qg: QueryGrapheme, target: Target, minTgi: number): Candidate[] {
     const qAtoms = qg.atoms;
     const qTailStart = qg.tailIndex;
     const qLeadVowelEnd = qTailStart === -1 ? qAtoms.length : qTailStart;
@@ -247,7 +343,7 @@ function findVowelCandidates(qg: QueryGrapheme, target: Target, minTgi: number):
         if (!ok) continue;
 
         if (qTailStart === -1) {
-            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi] });
+            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi], tailSpilled: false });
             continue;
         }
 
@@ -259,7 +355,7 @@ function findVowelCandidates(qg: QueryGrapheme, target: Target, minTgi: number):
     return candidates;
 }
 
-// 종성 atom들을 anchor부터 이후 음절로 매칭 시도
+// 종성 atom들을 anchor부터 이후 음절로 매칭 시도 (composing grapheme 전용)
 function matchTailFrom(
     qg: QueryGrapheme,
     target: Target,
@@ -304,7 +400,12 @@ function matchTailFrom(
         if (!found) return null;
     }
 
-    return { startTgi: anchorTgi, endTgi: lastMatchedTgi, indices };
+    return {
+        startTgi: anchorTgi,
+        endTgi: lastMatchedTgi,
+        indices,
+        tailSpilled: lastMatchedTgi !== anchorTgi,
+    };
 }
 
 // 초성 전용 한글 클러스터의 모든 시작 위치 수집
@@ -316,7 +417,7 @@ function findConsonantCandidates(qAtoms: Atoms, target: Target, minTgi: number):
         if (target.atomsFlat[target.atomStarts[startTgi]] !== qAtoms[0]) continue;
 
         if (qAtoms.length === 1) {
-            candidates.push({ startTgi, endTgi: startTgi, indices: [startTgi] });
+            candidates.push({ startTgi, endTgi: startTgi, indices: [startTgi], tailSpilled: false });
             continue;
         }
 
@@ -341,27 +442,31 @@ function findConsonantCandidates(qAtoms: Atoms, target: Target, minTgi: number):
             }
         }
         if (ok) {
-            candidates.push({ startTgi, endTgi: indices[indices.length - 1], indices });
+            candidates.push({ startTgi, endTgi: indices[indices.length - 1], indices, tailSpilled: false });
         }
     }
     return candidates;
 }
 
-// 비한글 grapheme의 모든 정확 매치 위치 수집
+// 비한글 grapheme 또는 finalized 한글 grapheme의 모든 정확 매치 위치 수집
 function findExactCandidates(qAtoms: Atoms, target: Target, minTgi: number): Candidate[] {
     const candidates: Candidate[] = [];
     const T = target.graphemeCount;
     for (let tgi = minTgi; tgi < T; tgi++) {
         if (atomsEqual(qAtoms, target, tgi)) {
-            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi] });
+            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi], tailSpilled: false });
         }
     }
     return candidates;
 }
 
-function findCandidates(qg: QueryGrapheme, target: Target, minTgi: number): Candidate[] {
+function findCandidates(qg: QueryGrapheme, target: Target, minTgi: number, isComposing: boolean): Candidate[] {
     if (qg.vowelIndex !== -1) {
-        return findVowelCandidates(qg, target, minTgi);
+        if (isComposing) {
+            return findVowelCandidatesComposing(qg, target, minTgi);
+        }
+        // finalized + 모음: 구조 매치 (anchor atom 시퀀스 == 쿼리 grapheme atoms)
+        return findExactCandidates(qg.atoms, target, minTgi);
     }
     if (isConsonantLUT[qg.atoms[0]] === 1) {
         return findConsonantCandidates(qg.atoms, target, minTgi);
@@ -403,7 +508,13 @@ function insertPareto<T extends { score: number; runLen: number }>(arr: T[], ne:
     arr.push(ne);
 }
 
-function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring, isChoseongOnly: boolean): number {
+function candidatePositionScore(
+    c: Candidate,
+    target: Target,
+    sc: ResolvedScoring,
+    isChoseongOnly: boolean,
+    applyTailSpillPenalty: boolean,
+): number {
     const weaken = isChoseongOnly ? sc.choseongWeaken : 1;
     let s = 0;
     for (const tgi of c.indices) {
@@ -411,13 +522,29 @@ function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScorin
         else if (target.boundaryFlags[tgi]) s += sc.boundary * weaken;
         s += sc.getBonus(tgi);
     }
+    if (c.tailSpilled && applyTailSpillPenalty) s += sc.tailSpillPenalty;
     return s;
 }
 
 /**
- * DP 기반 최적 정렬 매칭.
+ * DP 기반 최적 정렬 매칭 + 스코어링.
+ *
+ * 매칭 규칙은 `match`와 동일. `spillMode`/`composingIndex` 동작은 {@link match} 참조.
+ *
+ * @param query - `buildQuery`로 만든 쿼리
+ * @param target - `preprocessTarget`으로 만든 타겟
+ * @param scoring - 스코어 가중치 / grapheme 보너스. `tailSpillPenalty`는 `spillMode === "always"` 에서만 적용
+ * @param composingIndex - 조합중인 char의 UTF-16 인덱스 (number/null/undefined 의미는 {@link match} 참조)
+ * @param spillMode - finalized 엄격성 정책 (기본값 `"composingOrLast"`)
+ * @returns 매치되면 `MatchResult` (with `score`), 아니면 `null`
  */
-export function matchBest(query: Query, target: Target, scoring?: ScoringConfig): MatchResult | null {
+export function matchBest(
+    query: Query,
+    target: Target,
+    scoring?: ScoringConfig,
+    composingIndex?: number | null,
+    spillMode: SpillMode = DEFAULT_SPILL_MODE,
+): MatchResult | null {
     const qGraphemes = query.graphemes;
     const T = target.graphemeCount;
     const Q = qGraphemes.length;
@@ -435,17 +562,19 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
     if (Q > T) return null;
 
     const sc = resolveScoring(scoring, target);
+    const resolvedComposing = resolveComposingGrapheme(query, composingIndex, spillMode);
+    const applyTailSpillPenalty = spillMode === "always";
 
     // Phase 1: 후보 수집
     const allCandidates: Candidate[][] = [];
     for (let qi = 0; qi < Q; qi++) {
-        const candidates = findCandidates(qGraphemes[qi], target, 0);
+        const isComp = isGraphemeComposing(resolvedComposing, qi);
+        const candidates = findCandidates(qGraphemes[qi], target, 0, isComp);
         if (candidates.length === 0) return null;
         allCandidates.push(candidates);
     }
 
     // Phase 2: DP
-    // consMap 대체: tgi-indexed 배열 (Map 할당/GC 제거)
     const consByTgi: (ConsPred[] | undefined)[] = new Array(T);
     const dpFrontier: FrontierEntry[][][] = [];
 
@@ -454,7 +583,13 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
         firstFrontier.push([
             {
-                score: candidatePositionScore(allCandidates[0][ci], target, sc, firstIsChoseongOnly),
+                score: candidatePositionScore(
+                    allCandidates[0][ci],
+                    target,
+                    sc,
+                    firstIsChoseongOnly,
+                    applyTailSpillPenalty,
+                ),
                 runLen: 1,
                 parentPci: -1,
                 parentFIdx: -1,
@@ -495,7 +630,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         }
         gapPreds.sort((a, b) => a.endTgi - b.endTgi);
 
-        // consMap: tgi → ConsPred[] (Map 대신 flat 배열로 GC 부담 제거)
         const consUsed: number[] = [];
         for (let pci = 0; pci < prevCands.length; pci++) {
             const frontier = prevFrontier[pci];
@@ -521,7 +655,7 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         for (let ci = 0; ci < currCandidates.length; ci++) {
             const c = currCandidates[ci];
             const s = c.startTgi;
-            const posScore = candidatePositionScore(c, target, sc, isChoseongOnly);
+            const posScore = candidatePositionScore(c, target, sc, isChoseongOnly, applyTailSpillPenalty);
             const frontier: FrontierEntry[] = [];
 
             const gapThreshold = s - 2;
@@ -562,7 +696,6 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
 
         dpFrontier.push(currFrontier);
 
-        // consByTgi cleanup: 사용된 슬롯만 초기화 (전체 순회 회피)
         for (let k = 0; k < consUsed.length; k++) {
             consByTgi[consUsed[k]] = undefined;
         }
@@ -589,7 +722,7 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
 
     if (bestFinalCi === -1 || bestFinalScore === -Infinity) return null;
 
-    // Phase 4: 백트래��
+    // Phase 4: 백트래킹
     const chosenCi = new Array<number>(Q);
     const chosenFIdx = new Array<number>(Q);
     chosenCi[Q - 1] = bestFinalCi;

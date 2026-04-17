@@ -245,13 +245,15 @@ describe("match - 유닛 테스트", () => {
     });
 
     describe("monotonic narrowing — 타이핑 journey 전체 검증", () => {
+        // journey 테스트는 liberal 매칭을 검증하므로 spillMode "always"로 고정.
+        // 새 기본값(composingOrLast)에서의 strict 동작은 composing.test.ts에서 커버.
         function assertJourneyMatches(targetStr: string, finalQueries: string[]) {
             const target = preprocessTarget(targetStr);
             for (const finalQuery of finalQueries) {
                 const journey = journeyFrom(finalQuery);
                 for (const state of journey) {
                     const q = buildQuery(state)!;
-                    const result = match(q, target);
+                    const result = match(q, target, undefined, "always");
                     expect(
                         result,
                         `target "${targetStr}" / final "${finalQuery}" / mid-state "${state}"`,

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <title>IME Composition Inspector</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, sans-serif;
+            margin: 0;
+            padding: 16px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            height: 100vh;
+        }
+
+        .pane {
+            overflow: auto;
+            background: #f7f7f9;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        #input {
+            width: 100%;
+            font-size: 28px;
+            padding: 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-family: inherit;
+        }
+
+        #input:focus {
+            border-color: #468;
+            outline: none;
+        }
+
+        h3 {
+            margin: 16px 0 6px 0;
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        h3:first-child {
+            margin-top: 0;
+        }
+
+        pre {
+            margin: 0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            background: white;
+            padding: 8px 10px;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .state {
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+
+        .state.on {
+            background: #ffe0e0;
+            color: #a00;
+        }
+
+        .state.off {
+            background: #e0f0e0;
+            color: #060;
+        }
+
+        .chars {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+            padding: 8px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            min-height: 38px;
+        }
+
+        .chars span {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 24px;
+            padding: 2px 4px;
+            background: #fafafa;
+            border: 1px solid #eee;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        .chars span.in {
+            background: #ffeaa0;
+            border-color: #f0c040;
+        }
+
+        .chars span small {
+            font-size: 9px;
+            color: #999;
+            line-height: 1;
+        }
+
+        .log {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log .entry {
+            padding: 3px 4px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .log .entry:last-child {
+            border: none;
+        }
+
+        .log .t {
+            color: #999;
+        }
+
+        .log .ty {
+            font-weight: bold;
+        }
+
+        .log .cs {
+            color: #c60;
+        }
+
+        .log .cu {
+            color: #a80;
+        }
+
+        .log .ce {
+            color: #080;
+        }
+
+        .log .in {
+            color: #068;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="pane">
+        <h3>입력 (한글 IME로 타이핑)</h3>
+        <input id="input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="여기에 한글 타이핑…">
+        <h3 style="margin-top:24px">이벤트 시퀀스</h3>
+        <pre>compositionstart  → 조합 시작 (selectionStart 캡처)
+compositionupdate → event.data = 현재 조합 텍스트
+compositionend    → 조합 종료 (data = 최종 확정 텍스트)
+input             → 값 변경될 때마다 (조합 중에도 발생)
+
+computed composingRange:
+  start = compositionstart 시점의 selectionStart
+  end   = start + compositionupdate.data.length</pre>
+    </div>
+    <div class="pane">
+        <h3>상태</h3>
+        <div id="state" class="state off">idle</div>
+        <h3>input.value</h3>
+        <pre id="value"></pre>
+        <h3>char-by-char (composing 구간 = 노란색)</h3>
+        <div id="chars" class="chars"></div>
+        <h3>selection</h3>
+        <pre id="sel"></pre>
+        <h3>computed composingRange</h3>
+        <pre id="range"></pre>
+        <h3>event log</h3>
+        <div id="log" class="log"></div>
+    </div>
+    <script>
+        const el = {
+            input: document.getElementById('input'),
+            state: document.getElementById('state'),
+            value: document.getElementById('value'),
+            chars: document.getElementById('chars'),
+            sel: document.getElementById('sel'),
+            range: document.getElementById('range'),
+            log: document.getElementById('log'),
+        };
+
+        let composing = false;
+        let compStart = -1;
+        let compData = '';
+        const logs = [];
+
+        function pushLog(type, data, extra = {}) {
+            logs.unshift({ t: new Date().toISOString().slice(14, 23), type, data, ...extra });
+            if (logs.length > 40) logs.pop();
+            renderLog();
+        }
+
+        function renderLog() {
+            el.log.innerHTML = logs.map(e => {
+                const cls = ({ compositionstart: 'cs', compositionupdate: 'cu', compositionend: 'ce', input: 'in' })[e.type] || '';
+                const extras = [];
+                if (e.sel) extras.push(`sel=${e.sel}`);
+                if (e.inputType) extras.push(`inputType=${e.inputType}`);
+                return `<div class="entry"><span class="t">${e.t}</span> <span class="ty ${cls}">${e.type}</span> data=${JSON.stringify(e.data ?? '')}${extras.length ? ' ' + extras.join(' ') : ''}</div>`;
+            }).join('');
+        }
+
+        function render() {
+            const v = el.input.value;
+            const ss = el.input.selectionStart ?? 0;
+            const se = el.input.selectionEnd ?? 0;
+
+            el.value.textContent = JSON.stringify(v);
+            el.sel.textContent = `selectionStart=${ss}  selectionEnd=${se}`;
+
+            let range = null;
+            if (composing && compStart >= 0) {
+                range = { start: compStart, end: compStart + compData.length };
+            }
+            el.range.textContent = range
+                ? `{ start: ${range.start}, end: ${range.end} }   length=${range.end - range.start}`
+                : 'null  (not composing)';
+
+            el.state.className = 'state ' + (composing ? 'on' : 'off');
+            el.state.textContent = composing
+                ? `COMPOSING  start=${compStart}  data=${JSON.stringify(compData)}`
+                : 'idle';
+
+            const chunks = [];
+            for (let i = 0; i < v.length; i++) {
+                const inRange = range && i >= range.start && i < range.end;
+                const ch = v[i];
+                const display = ch === ' ' ? '·' : ch;
+                const hex = v.charCodeAt(i).toString(16).toUpperCase().padStart(4, '0');
+                chunks.push(`<span class="${inRange ? 'in' : ''}" title="U+${hex}"><small>${i}</small>${display}</span>`);
+            }
+            el.chars.innerHTML = chunks.join('') || '<em style="color:#aaa">(empty)</em>';
+        }
+
+        el.input.addEventListener('compositionstart', e => {
+            composing = true;
+            compStart = el.input.selectionStart ?? 0;
+            compData = e.data || '';
+            pushLog('compositionstart', e.data, { sel: `${el.input.selectionStart}-${el.input.selectionEnd}` });
+            render();
+        });
+        el.input.addEventListener('compositionupdate', e => {
+            compData = e.data || '';
+            pushLog('compositionupdate', e.data, { sel: `${el.input.selectionStart}-${el.input.selectionEnd}` });
+            render();
+        });
+        el.input.addEventListener('compositionend', e => {
+            composing = false;
+            pushLog('compositionend', e.data, { sel: `${el.input.selectionStart}-${el.input.selectionEnd}` });
+            compStart = -1;
+            compData = '';
+            render();
+        });
+        el.input.addEventListener('input', e => {
+            pushLog('input', e.data, { sel: `${el.input.selectionStart}-${el.input.selectionEnd}`, inputType: e.inputType });
+            render();
+        });
+        document.addEventListener('selectionchange', render);
+
+        render();
+        el.input.focus();
+    </script>
+</body>
+
+</html>

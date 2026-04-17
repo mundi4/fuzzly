@@ -21,9 +21,7 @@ import type { Atoms, Target } from "./types";
  */
 export function preprocessTarget(input: string): Target {
     if (input.length > 0xffff) {
-        throw new RangeError(
-            `preprocessTarget: input length ${input.length} exceeds Uint16Array limit (65535)`,
-        );
+        throw new RangeError(`preprocessTarget: input length ${input.length} exceeds Uint16Array limit (65535)`);
     }
 
     const normalizedInput = input.toLowerCase();

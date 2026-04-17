@@ -9,6 +9,8 @@ import type { MatchResult, ScoringConfig, Target } from "./types";
  *   - 초성-only 쿼리 grapheme에서 POSITION_ZERO, BOUNDARY는 CHOSEONG_WEAKEN으로 축약 적용
  * - DP 전이 시: CONSECUTIVE (run 길이 기반 삼각수 보너스), GAP_PENALTY
  * - 최종 보정: PREFIX_BONUS, EXACT_BONUS, TARGET_LENGTH_PENALTY × min(L, LENGTH_PENALTY_CAP)
+ * - TAIL_SPILL_PENALTY: **`spillMode === "always"` 일 때만** 적용. 다른 spillMode에서는
+ *   tail spill 자체가 차단되어 이 값과 무관하게 동작한다.
  */
 export const SCORING = {
     POSITION_ZERO: 100,
@@ -20,6 +22,7 @@ export const SCORING = {
     TARGET_LENGTH_PENALTY: -1,
     LENGTH_PENALTY_CAP: 16,
     CHOSEONG_WEAKEN: 0.5,
+    TAIL_SPILL_PENALTY: -30,
 } as const;
 
 export type ResolvedScoring = {
@@ -32,6 +35,7 @@ export type ResolvedScoring = {
     targetLengthPenalty: number;
     lengthPenaltyCap: number;
     choseongWeaken: number;
+    tailSpillPenalty: number;
     getBonus: (graphemeIndex: number) => number;
 };
 
@@ -49,7 +53,7 @@ function resolveChoseongWeaken(v: number | undefined): number {
     return v > 1 ? 1 : v;
 }
 
-// config === undefined일 때 ���번 새 객체를 만들지 않도록 캐시.
+// config === undefined일 때 매번 새 객체를 만들지 않도록 캐시.
 // matchBest가 4000회/키스트로크 호출되므로 기본 설정 시 4000 객체 할당 제거.
 const DEFAULT_RESOLVED: ResolvedScoring = {
     positionZero: SCORING.POSITION_ZERO,
@@ -61,6 +65,7 @@ const DEFAULT_RESOLVED: ResolvedScoring = {
     targetLengthPenalty: SCORING.TARGET_LENGTH_PENALTY,
     lengthPenaltyCap: SCORING.LENGTH_PENALTY_CAP,
     choseongWeaken: SCORING.CHOSEONG_WEAKEN,
+    tailSpillPenalty: SCORING.TAIL_SPILL_PENALTY,
     getBonus: NO_BONUS,
 };
 
@@ -91,6 +96,7 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
         targetLengthPenalty: w?.targetLengthPenalty ?? SCORING.TARGET_LENGTH_PENALTY,
         lengthPenaltyCap: resolveLengthPenaltyCap(w?.lengthPenaltyCap),
         choseongWeaken: resolveChoseongWeaken(w?.choseongWeaken),
+        tailSpillPenalty: w?.tailSpillPenalty ?? SCORING.TAIL_SPILL_PENALTY,
         getBonus,
     };
 }
