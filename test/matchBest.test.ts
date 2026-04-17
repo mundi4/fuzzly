@@ -111,13 +111,12 @@ describe("matchBest", () => {
             expect(r1.score!).toBeGreaterThan(r2.score!);
         });
 
-        it("초성 전용 쿼리 페널티", () => {
+        it("초성-only 쿼리는 positionZero/boundary 약화로 완성 음절보다 낮은 점수", () => {
             const q1 = buildQuery("ㅇㄴ");
             const q2 = buildQuery("안녕");
             const target = preprocessTarget("안녕하세요");
             const r1 = matchBest(q1, target)!;
             const r2 = matchBest(q2, target)!;
-            // 초성만 쿼리는 페널티를 받음
             expect(r1.score!).toBeLessThan(r2.score!);
         });
     });
@@ -162,8 +161,9 @@ describe("matchBest", () => {
                 "GAP_PENALTY",
                 "PREFIX_BONUS",
                 "EXACT_BONUS",
-                "INITIAL_CONSONANT_PENALTY",
                 "TARGET_LENGTH_PENALTY",
+                "LENGTH_PENALTY_CAP",
+                "CHOSEONG_WEAKEN",
             ] as const;
             for (const k of keys) {
                 expect(typeof SCORING[k]).toBe("number");
@@ -178,8 +178,125 @@ describe("matchBest", () => {
             expect(SCORING.BOUNDARY).toBeGreaterThan(SCORING.CONSECUTIVE);
             // 페널티는 음수
             expect(SCORING.GAP_PENALTY).toBeLessThan(0);
-            expect(SCORING.INITIAL_CONSONANT_PENALTY).toBeLessThan(0);
             expect(SCORING.TARGET_LENGTH_PENALTY).toBeLessThan(0);
+            // cap은 양수 정수, choseongWeaken은 (0,1] 범위
+            expect(SCORING.LENGTH_PENALTY_CAP).toBeGreaterThan(0);
+            expect(SCORING.CHOSEONG_WEAKEN).toBeGreaterThan(0);
+            expect(SCORING.CHOSEONG_WEAKEN).toBeLessThanOrEqual(1);
+        });
+    });
+
+    describe("삼각수 연속 보너스 · 길이 cap · 초성 약화", () => {
+        it("초성 4-run이 2+2 run보다 우위 (은행재원 vs 외환프라자)", () => {
+            const q = buildQuery("ㅇㅎㅈㅇ");
+            const t1 = preprocessTarget("제1절 외환프라자 정의");
+            const t2 = preprocessTarget("제1목 은행재원 협약보증 주택전세자금대출");
+            const r1 = matchBest(q, t1)!;
+            const r2 = matchBest(q, t2)!;
+            expect(r2.score!).toBeGreaterThan(r1.score!);
+        });
+
+        it("4-run 연속이 2+2 run보다 2배 이상 큰 연속 보너스 기여", () => {
+            // 같은 쿼리 길이, 같은 pos 기여(전부 non-boundary)인 두 패턴.
+            // "abcd" 에서 "abcd" 매치: 4-run
+            // "abxcd" 에서 "abcd" 매치: 2+2 run with gap 1
+            const q = buildQuery("abcd");
+            const t1 = preprocessTarget("xabcd"); // 4-run at [1,2,3,4]
+            const t2 = preprocessTarget("xabxcd"); // 2+2 at [1,2,4,5]
+            const r1 = matchBest(q, t1)!;
+            const r2 = matchBest(q, t2)!;
+            // 4-run 연속 보너스: 20+40+60 = 120
+            // 2+2 연속 보너스: 20 + 20 = 40 (각 run 내 1회씩). gap 페널티 -3.
+            // 길이도 t2가 1 길어서 length cap 밖이면 영향 동일, 안이면 t2가 조금 더 큰 페널티.
+            const diff = r1.score! - r2.score!;
+            expect(diff).toBeGreaterThan(60); // 최소 (120-40) - 3 - 1 = 76 기대
+        });
+
+        it("3-run이 1+2 run보다 우위", () => {
+            const q = buildQuery("abc");
+            // 둘 다 "a"가 idx 1이라 positionZero 영향 없음
+            const t1 = preprocessTarget("xabc"); // 3-run at [1,2,3]
+            const t2 = preprocessTarget("xaybc"); // 1+2-run at [1,3,4]
+            const r1 = matchBest(q, t1)!;
+            const r2 = matchBest(q, t2)!;
+            // 3-run 연속 보너스: 20+40 = 60 (triangular)
+            // 1+2 run: 20 + gap penalty
+            expect(r1.score!).toBeGreaterThan(r2.score!);
+        });
+
+        it("길이 cap: 동일 매치 구조에서 cap 이상 타겟은 페널티 동일", () => {
+            const q = buildQuery("a");
+            // padding이 cap 보다 크면 길이 페널티 포화
+            const t1 = preprocessTarget(`a${"x".repeat(20)}`); // L=21
+            const t2 = preprocessTarget(`a${"x".repeat(40)}`); // L=41
+            const r1 = matchBest(q, t1)!;
+            const r2 = matchBest(q, t2)!;
+            // cap=16, α=-1 기본값 → 둘 다 페널티 -16, 기타 동일
+            expect(r1.score!).toBe(r2.score!);
+        });
+
+        it("길이 cap 이하 구간에서는 여전히 짧은 타겟이 우위", () => {
+            const q = buildQuery("a");
+            const t1 = preprocessTarget("abc"); // L=3
+            const t2 = preprocessTarget("abcdefgh"); // L=8
+            const r1 = matchBest(q, t1)!;
+            const r2 = matchBest(q, t2)!;
+            expect(r1.score!).toBeGreaterThan(r2.score!);
+        });
+
+        it("초성-only가 위치 0 매치에서 완성 음절보다 낮은 점수 (positionZero 약화)", () => {
+            const qChoseong = buildQuery("ㅈ");
+            const qFull = buildQuery("정");
+            const target = preprocessTarget("정의");
+            const rC = matchBest(qChoseong, target)!;
+            const rF = matchBest(qFull, target)!;
+            // 둘 다 idx 0 매치이지만 초성-only는 positionZero×0.5 로 축약됨
+            expect(rC.score!).toBeLessThan(rF.score!);
+        });
+
+        it("초성-only가 경계 매치에서 완성 음절보다 낮은 점수 (boundary 약화)", () => {
+            const qChoseong = buildQuery("ㅎ");
+            const qFull = buildQuery("하");
+            const target = preprocessTarget("안녕 하세요");
+            const rC = matchBest(qChoseong, target)!;
+            const rF = matchBest(qFull, target)!;
+            expect(rC.score!).toBeLessThan(rF.score!);
+        });
+    });
+
+    describe("ScoringConfig 오버라이드 · 신규 가중치", () => {
+        it("choseongWeaken=1이면 초성-only 약화 제거", () => {
+            const qChoseong = buildQuery("ㅈ");
+            const qFull = buildQuery("정");
+            const target = preprocessTarget("정의");
+            const rC = matchBest(qChoseong, target, { weights: { choseongWeaken: 1 } })!;
+            const rF = matchBest(qFull, target)!;
+            // 약화 제거 시 두 매치 모두 positionZero 만점 → 동일 점수
+            expect(rC.score!).toBe(rF.score!);
+        });
+
+        it("lengthPenaltyCap을 크게 설정하면 선형 페널티로 회귀", () => {
+            const q = buildQuery("a");
+            const t1 = preprocessTarget(`a${"x".repeat(20)}`); // L=21
+            const t2 = preprocessTarget(`a${"x".repeat(40)}`); // L=41
+            const scoring = { weights: { lengthPenaltyCap: 1000 } };
+            const r1 = matchBest(q, t1, scoring)!;
+            const r2 = matchBest(q, t2, scoring)!;
+            // cap 무력화: t2가 20만큼 더 큰 페널티 (-40 vs -20)
+            expect(r1.score! - r2.score!).toBe(20);
+        });
+
+        it("consecutive=0이면 연속 보너스 제거, run 구조 차이 사라짐", () => {
+            const q = buildQuery("abc");
+            const t1 = preprocessTarget("xabc"); // 3-run
+            const t2 = preprocessTarget("xabxc"); // 2+1 run
+            const scoring = { weights: { consecutive: 0 } };
+            const r1 = matchBest(q, t1, scoring)!;
+            const r2 = matchBest(q, t2, scoring)!;
+            // 연속 보너스 0이면 t1의 우위는 오직 gap 페널티 차이 (-3×1)뿐.
+            // 그리고 t2가 1 길어서 길이페널티 -1.
+            // 차이 <= 4 이어야 함 (원래 40+ 차이와 대비)
+            expect(r1.score! - r2.score!).toBeLessThanOrEqual(4);
         });
     });
 });

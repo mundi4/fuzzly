@@ -377,12 +377,22 @@ function findCandidates(qg: QueryGrapheme, tGraphemes: TargetGrapheme[], minTgi:
     return findExactCandidates(qg.atoms, tGraphemes, minTgi);
 }
 
+// 한글 초성-only 쿼리 grapheme 판정: 모음이 없으면서 첫 atom이 Hangul compat 자모.
+// ASCII 등 비한글 grapheme은 vowelIndex=-1이지만 "초성" 개념이 없으므로 약화 대상 아님.
+function isHangulChoseongOnly(qg: QueryGrapheme): boolean {
+    if (qg.vowelIndex !== -1) return false;
+    const firstCode = qg.atoms.charCodeAt(0);
+    return firstCode >= 0x3131 && firstCode <= 0x3163;
+}
+
 // 후보의 위치 점수 (경계 보너스, 위치 0 보너스, per-grapheme bonus)
-function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring): number {
+// 한글 초성-only 쿼리 grapheme이면 positionZero/boundary 기여는 sc.choseongWeaken 배수로 축약.
+function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring, isChoseongOnly: boolean): number {
+    const weaken = isChoseongOnly ? sc.choseongWeaken : 1;
     let s = 0;
     for (const tgi of c.indices) {
-        if (tgi === 0) s += sc.positionZero;
-        else if (target.boundaryFlags[tgi]) s += sc.boundary;
+        if (tgi === 0) s += sc.positionZero * weaken;
+        else if (target.boundaryFlags[tgi]) s += sc.boundary * weaken;
         s += sc.getBonus(tgi);
     }
     return s;
@@ -428,43 +438,61 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
 
     // Phase 2: DP — dp[qi][ci] = qi번째 쿼리 grapheme에 ci번째 후보를 사용할 때 최대 스코어
     // 전이 최적화: 중첩 루프 대신 prefix-max sweep으로 O(Q×C) 전이
+    // runLen: 현재 (qi, ci) 상태에 도달했을 때의 run 길이 (candidate 연쇄 개수).
+    // 삼각수 연속 보너스를 위해 각 DP 엔트리마다 runLen을 함께 추적한다.
     const dpScores: number[][] = [];
     const dpParents: number[][] = [];
+    const dpRunLens: number[][] = [];
 
-    // qi = 0 초기화
+    // qi = 0 초기화 — 모든 entry의 runLen = 1
     const firstScores: number[] = [];
     const firstParents: number[] = [];
+    const firstRunLens: number[] = [];
+    const firstIsChoseongOnly = isHangulChoseongOnly(qGraphemes[0]);
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
-        firstScores.push(candidatePositionScore(allCandidates[0][ci], target, sc));
+        firstScores.push(candidatePositionScore(allCandidates[0][ci], target, sc, firstIsChoseongOnly));
         firstParents.push(-1);
+        firstRunLens.push(1);
     }
     dpScores.push(firstScores);
     dpParents.push(firstParents);
+    dpRunLens.push(firstRunLens);
 
     for (let qi = 1; qi < Q; qi++) {
         const currCandidates = allCandidates[qi];
         const prevCands = allCandidates[qi - 1];
         const prevScoresArr = dpScores[qi - 1];
+        const prevRunLensArr = dpRunLens[qi - 1];
+        const isChoseongOnly = isHangulChoseongOnly(qGraphemes[qi]);
         const currScores: number[] = [];
         const currParent: number[] = [];
+        const currRunLens: number[] = [];
 
         // 전처리: 유효한 predecessor를 endTgi 순으로 수집
-        const preds: { endTgi: number; score: number; gapVal: number; pci: number }[] = [];
+        const preds: { endTgi: number; score: number; gapVal: number; pci: number; runLen: number }[] = [];
         for (let pci = 0; pci < prevCands.length; pci++) {
             const s = prevScoresArr[pci];
             if (s === -Infinity) continue;
             const e = prevCands[pci].endTgi;
-            preds.push({ endTgi: e, score: s, gapVal: s - sc.gapPenalty * e, pci });
+            preds.push({
+                endTgi: e,
+                score: s,
+                gapVal: s - sc.gapPenalty * e,
+                pci,
+                runLen: prevRunLensArr[pci],
+            });
         }
         preds.sort((a, b) => a.endTgi - b.endTgi);
 
-        // consecutive lookup: endTgi → 해당 endTgi에서 최대 (score + CONSECUTIVE, pci)
-        const consMap = new Map<number, { total: number; pci: number }>();
+        // consecutive lookup: endTgi → 해당 endTgi에서 최대 (score + consecutive × runLen)
+        // 삼각수 체계: consecutive 전이 시 `sc.consecutive × prev.runLen` 가산.
+        // 동점(total 같음)이면 runLen 큰 것 우선 (미래 전이에서 더 큰 보너스 획득).
+        const consMap = new Map<number, { total: number; pci: number; prevRunLen: number }>();
         for (const p of preds) {
-            const total = p.score + sc.consecutive;
+            const total = p.score + sc.consecutive * p.runLen;
             const existing = consMap.get(p.endTgi);
-            if (!existing || total > existing.total) {
-                consMap.set(p.endTgi, { total, pci: p.pci });
+            if (!existing || total > existing.total || (total === existing.total && p.runLen > existing.prevRunLen)) {
+                consMap.set(p.endTgi, { total, pci: p.pci, prevRunLen: p.runLen });
             }
         }
 
@@ -477,6 +505,7 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
             const s = currCandidates[ci].startTgi;
             let bestScore = -Infinity;
             let bestPredIdx = -1;
+            let bestNewRunLen = 1;
 
             // gap: endTgi <= s-2인 predecessor의 누적 최대 gapVal
             const gapThreshold = s - 2;
@@ -491,6 +520,7 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
                 const gapTotal = gapBestVal + sc.gapPenalty * (s - 1);
                 bestScore = gapTotal;
                 bestPredIdx = gapBestPci;
+                bestNewRunLen = 1;
             }
 
             // consecutive: endTgi === s-1
@@ -498,19 +528,23 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
             if (consEntry && consEntry.total > bestScore) {
                 bestScore = consEntry.total;
                 bestPredIdx = consEntry.pci;
+                bestNewRunLen = consEntry.prevRunLen + 1;
             }
 
             if (bestPredIdx === -1) {
                 currScores.push(-Infinity);
                 currParent.push(-1);
+                currRunLens.push(1);
             } else {
-                currScores.push(bestScore + candidatePositionScore(currCandidates[ci], target, sc));
+                currScores.push(bestScore + candidatePositionScore(currCandidates[ci], target, sc, isChoseongOnly));
                 currParent.push(bestPredIdx);
+                currRunLens.push(bestNewRunLen);
             }
         }
 
         dpScores.push(currScores);
         dpParents.push(currParent);
+        dpRunLens.push(currRunLens);
     }
 
     // Phase 3: 최적 종점 찾기
@@ -574,18 +608,8 @@ export function matchBest(query: Query, target: Target, scoring?: ScoringConfig)
         score += sc.exactBonus;
     }
 
-    // 초성 전용 페널티
-    let initialConsonantOnly = Q > 0;
-    for (const qg of qGraphemes) {
-        if (qg.vowelIndex !== -1) {
-            initialConsonantOnly = false;
-            break;
-        }
-    }
-    if (initialConsonantOnly) score += sc.initialConsonantPenalty;
-
-    // 타겟 길이 페널티 (짧은 타겟 선호)
-    score += sc.targetLengthPenalty * tGraphemes.length;
+    // 타겟 길이 페널티 (짧은 타겟 선호). cap 이상 길이는 포화.
+    score += sc.targetLengthPenalty * Math.min(tGraphemes.length, sc.lengthPenaltyCap);
 
     const result = buildMatchResult(indices, target, qGraphemes);
     result.score = score;

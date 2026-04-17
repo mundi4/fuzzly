@@ -134,7 +134,10 @@ export type ScoringWeights = {
     positionZero?: number;
     /** 단어 경계 매치 보너스 (default: 50) */
     boundary?: number;
-    /** 직전 매치와 연속일 때 보너스 (default: 20) */
+    /**
+     * run 내부 n번째 연속 전이에 `consecutive × n` 만큼 가산되는 보너스.
+     * run 길이 N일 때 총 `consecutive × N(N−1)/2` (삼각수) 누적 (default: 20).
+     */
     consecutive?: number;
     /** 매치 사이 스킵된 grapheme당 페널티, 음수 (default: -3) */
     gapPenalty?: number;
@@ -142,10 +145,15 @@ export type ScoringWeights = {
     prefixBonus?: number;
     /** 쿼리가 타겟 전체와 일치할 때 보너스 (default: 500) */
     exactBonus?: number;
-    /** 초성 전용 쿼리 페널티, 음수 (default: -30) */
-    initialConsonantPenalty?: number;
     /** 타겟 grapheme 수당 페널티, 음수 — 짧은 타겟 선호 (default: -1) */
     targetLengthPenalty?: number;
+    /** 타겟 길이 페널티의 cap. `targetLengthPenalty × min(L, lengthPenaltyCap)` 로 포화 (default: 16) */
+    lengthPenaltyCap?: number;
+    /**
+     * 초성-only 쿼리 grapheme의 positionZero/boundary 기여 배수.
+     * 완성 음절 매치가 초성-only 매치보다 선호되도록 하는 장치 (default: 0.5).
+     */
+    choseongWeaken?: number;
 };
 
 /**

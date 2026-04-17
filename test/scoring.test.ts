@@ -46,12 +46,13 @@ describe("ScoringConfig - weights override", () => {
                 gapPenalty: 0,
                 prefixBonus: 0,
                 exactBonus: 0,
-                initialConsonantPenalty: 0,
                 targetLengthPenalty: 0,
+                lengthPenaltyCap: 16,
+                choseongWeaken: 0.5,
             },
         };
         const result = matchBest(query, target, scoring)!;
-        // 모든 가중치가 0이면 스코어도 0
+        // 모든 스코어 관련 가중치가 0이면 스코어도 0
         expect(result.score).toBe(0);
     });
 });
