@@ -246,7 +246,10 @@ describe("match - 유닛 테스트", () => {
 
     describe("monotonic narrowing — 타이핑 journey 전체 검증", () => {
         // journey 테스트는 liberal 매칭을 검증하므로 spillMode "always"로 고정.
-        // 새 기본값(composingOrLast)에서의 strict 동작은 composing.test.ts에서 커버.
+        // 단, tail이 있는 composing grapheme의 anchor 잉여는 tail prefix와 일치해야 하는
+        // 규칙(규칙 D)은 "always"에서도 적용된다 — "모음까지 입력했다면 사용자는 완전한 음절을
+        // 입력하려는 의도로 본다"가 전체 모드 공통 전제. 따라서 finalQueries에 넣는 쿼리는
+        // 해당 target으로 가는 IME journey에서 anchor 잉여가 tail prefix와 일치하는 경로여야 함.
         function assertJourneyMatches(targetStr: string, finalQueries: string[]) {
             const target = preprocessTarget(targetStr);
             for (const finalQuery of finalQueries) {
@@ -267,6 +270,9 @@ describe("match - 유닛 테스트", () => {
         });
 
         it("전략기획부 — 초성 약식/겹받침 compound jamo/혼합", () => {
+            // "저략"은 의도적으로 제외 — 규칙 D 하에서 모음까지 입력한 "저"는
+            // "전"과 의미론적으로 다른 의도로 간주되므로 journeyFrom("저략")의 중간 상태
+            // "절"이 "전략기획부"에 매치되지 않는다.
             assertJourneyMatches("전략기획부", [
                 "ㅈㄺㅎㅂ",
                 "ㅈㄼ",
@@ -275,7 +281,6 @@ describe("match - 유닛 테스트", () => {
                 "ㅈㄺㅎ",
                 "ㄺㅎ",
                 "전략ㄱㅎㅂ",
-                "저략",
                 "ㅈ랴깋ㅂ",
             ]);
         });

@@ -12,7 +12,10 @@ import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, SpillMode
  * 매치된 타겟 음절 안에서 바로 이어지는 위치에서만 소비된다.
  *
  * **spillMode 기반 finalized 구조 엄격성**:
- * - 조합중(composing) grapheme은 기존대로 tail이 다음 음절로 spill 가능
+ * - 조합중(composing) grapheme은 tail이 다음 음절로 spill 가능. 단, anchor의 lead+vowel 이후
+ *   잉여 atoms가 있다면 그 atoms는 쿼리 tail atoms의 prefix와 정확히 일치해야 함
+ *   (예: "읽"=[ㅇㅣㄹㄱ] vs anchor "일"=[ㅇㅣㄹ]은 잉여 ㄹ이 tail prefix ㄹ과 일치 → OK, ㄱ spill.
+ *    "염"=[ㅇㅕㅁ] vs anchor "연"=[ㅇㅕㄴ]은 잉여 ㄴ이 tail ㅁ과 불일치 → reject)
  * - 확정(finalized) + 모음 포함 grapheme은 타겟 anchor grapheme과 atom 시퀀스가 정확히 일치해야 함
  *   (= tail spill 금지 AND anchor 잉여 atom 금지)
  *
@@ -95,7 +98,8 @@ function buildMatchResult(indices: number[], target: Target, queryGraphemes: Que
  * 탐욕적(greedy) 좌→우 매칭. 첫 번째로 유효한 정렬을 반환한다.
  *
  * **매칭 규칙 (spillMode 기반)**:
- * - **조합중(composing)** grapheme: lead+vowel은 anchor 음절 내부에서 매치, tail은 다음 음절로 spill 가능
+ * - **조합중(composing)** grapheme: lead+vowel은 anchor 음절 내부에서 매치, tail은 다음 음절로 spill 가능.
+ *   단, anchor의 잉여 atoms는 쿼리 tail prefix와 일치해야 함 (예: "염" ≠ "연"의 잉여 ㄴ).
  * - **확정(finalized) + 모음 포함** grapheme: 타겟 anchor와 atom 시퀀스 정확히 일치 필요
  *   (tail spill 금지 + anchor 잉여 atom 금지). 예: "으"(finalized) ≠ "은", "일"(finalized) ≠ "읽"
  * - 초성-only grapheme / non-Hangul(ASCII, 이모지)은 spillMode 영향 없음
@@ -217,6 +221,13 @@ export function match(
                 tgi++;
                 continue;
             }
+            if (
+                qTailStart !== -1 &&
+                !checkAnchorExtrasPrefix(qAtoms, qTailStart, target, tStart, tLen, qLeadVowelEnd)
+            ) {
+                tgi++;
+                continue;
+            }
             anchorTgi = tgi;
             break;
         }
@@ -311,6 +322,27 @@ function atomsEqual(qAtoms: Atoms, target: Target, tgi: number): boolean {
     return true;
 }
 
+// tail이 있는 composing grapheme의 anchor acceptance 보조 체크.
+// anchor의 qLeadVowelEnd 이후 잉여 atoms는 쿼리 tail atoms의 prefix와 정확히 일치해야 함.
+// 불일치 시 잉여 atom이 어떤 쿼리 atom에도 대응되지 않는 false positive가 발생하기 때문.
+function checkAnchorExtrasPrefix(
+    qAtoms: Atoms,
+    qTailStart: number,
+    target: Target,
+    tStart: number,
+    tLen: number,
+    qLeadVowelEnd: number,
+): boolean {
+    const anchorExtras = tLen - qLeadVowelEnd;
+    if (anchorExtras <= 0) return true;
+    const qTailLen = qAtoms.length - qTailStart;
+    if (anchorExtras > qTailLen) return false;
+    for (let i = 0; i < anchorExtras; i++) {
+        if (qAtoms[qTailStart + i] !== target.atomsFlat[tStart + qLeadVowelEnd + i]) return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // matchBest: DP 기반 최적 정렬 탐색
 // ---------------------------------------------------------------------------
@@ -351,6 +383,8 @@ function findVowelCandidatesComposing(qg: QueryGrapheme, target: Target, minTgi:
             candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi], tailSpilled: false });
             continue;
         }
+
+        if (!checkAnchorExtrasPrefix(qAtoms, qTailStart, target, tStart, tLen, qLeadVowelEnd)) continue;
 
         const tailResult = matchTailFrom(qg, target, tgi, tStart + qLeadVowelEnd);
         if (tailResult) {

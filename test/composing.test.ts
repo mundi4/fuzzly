@@ -65,20 +65,22 @@ describe("spillMode + composingIndex", () => {
             expect(matchBest(q, t, undefined, undefined, "always")).toBeNull();
         });
 
-        it("'염' → '막연하게 평범한 머그컵' 매치는 연+머 (범 종성 아님)", () => {
-            const q = buildQuery("염");
-            const t = preprocessTarget("막연하게 평범한 머그컵");
-            const r = match(q, t, undefined, "always");
-            expect(r?.indices).toEqual([1, 9]);
-            const rb = matchBest(q, t, undefined, undefined, "always");
-            expect(rb?.indices).toEqual([1, 9]);
-        });
-
-        it("'염' → '연머' 매치 O (머 초성 ㅁ에 spill)", () => {
-            const q = buildQuery("염");
-            const t = preprocessTarget("연머");
+        it("'앍' → '알고' 매치 O (ㄱ이 고 초성으로 spill)", () => {
+            // '알' 잉여 ㄹ이 쿼리 tail prefix ㄹ과 일치 → anchor 승인, 남은 ㄱ은 spill.
+            const q = buildQuery("앍");
+            const t = preprocessTarget("알고");
             const r = match(q, t, undefined, "always");
             expect(r?.indices).toEqual([0, 1]);
+            const rb = matchBest(q, t, undefined, undefined, "always");
+            expect(rb?.indices).toEqual([0, 1]);
+        });
+
+        it("'앍' → '알먹' 매치 X (먹 종성 ㄱ에 spill 금지)", () => {
+            // ㄱ이 '먹' 초성(ㅁ)과 불일치, 종성 ㄱ은 spill 대상 아님.
+            const q = buildQuery("앍");
+            const t = preprocessTarget("알먹");
+            expect(match(q, t, undefined, "always")).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, "always")).toBeNull();
         });
 
         it("anchor 잉여는 여전히 허용: '읽' composing → '일기' 매치 O", () => {
@@ -87,6 +89,69 @@ describe("spillMode + composingIndex", () => {
             const t = preprocessTarget("일기");
             const r = match(q, t, 0);
             expect(r?.indices).toEqual([0, 1]);
+        });
+    });
+
+    describe("규칙 D — tail spill 시 anchor 잉여는 tail prefix와 일치해야 함", () => {
+        // tail이 있는 composing grapheme에서 anchor의 qLeadVowelEnd 이후 잉여 atoms는
+        // 쿼리 tail atoms의 prefix와 정확히 일치해야 한다. 일치하지 않으면 anchor 잉여가
+        // 어떤 쿼리 atom에도 대응되지 않는 false positive가 된다.
+
+        it("'염' → '연' 매치 X (잉여 ㄴ이 tail ㅁ과 불일치)", () => {
+            const q = buildQuery("염");
+            const t = preprocessTarget("연");
+            expect(match(q, t)).toBeNull();
+            expect(matchBest(q, t)).toBeNull();
+            expect(match(q, t, undefined, "always")).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, "always")).toBeNull();
+        });
+
+        it("'염' → '막연하게 평범한 머그컵' 매치 X ('연'이 anchor가 될 수 없음)", () => {
+            // ㅁ이 '머'로 spill되더라도 '연'의 잉여 ㄴ이 쿼리에 없는 atom이라 anchor 불가.
+            const q = buildQuery("염");
+            const t = preprocessTarget("막연하게 평범한 머그컵");
+            expect(match(q, t)).toBeNull();
+            expect(matchBest(q, t)).toBeNull();
+            expect(match(q, t, undefined, "always")).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, "always")).toBeNull();
+        });
+
+        it("'염' → '염' 매치 O (anchorExtras==qTailLen, 정확 일치)", () => {
+            const q = buildQuery("염");
+            const t = preprocessTarget("염");
+            expect(match(q, t)).not.toBeNull();
+            expect(matchBest(q, t)).not.toBeNull();
+        });
+
+        it("'읽' → '일기' 매치 O (prefix 일치, ㄱ spill) — 회귀 가드", () => {
+            const q = buildQuery("읽");
+            const t = preprocessTarget("일기");
+            expect(match(q, t)?.indices).toEqual([0, 1]);
+            expect(matchBest(q, t)?.indices).toEqual([0, 1]);
+        });
+
+        it("'알' → '앏' 매치 X (anchorExtras > qTailLen)", () => {
+            // anchor '앏' 잉여 [ㄹ,ㅂ]는 쿼리 tail [ㄹ]보다 길다 → reject.
+            const q = buildQuery("알");
+            const t = preprocessTarget("앏");
+            expect(match(q, t)).toBeNull();
+            expect(matchBest(q, t)).toBeNull();
+            expect(match(q, t, undefined, "always")).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, "always")).toBeNull();
+        });
+
+        it("'앍' → '알고' 매치 O (compound tail, prefix 일치 후 ㄱ spill)", () => {
+            const q = buildQuery("앍");
+            const t = preprocessTarget("알고");
+            expect(match(q, t)?.indices).toEqual([0, 1]);
+            expect(matchBest(q, t)?.indices).toEqual([0, 1]);
+        });
+
+        it("'가' → '값' 매치 O (qTailStart=-1, 규칙 미적용)", () => {
+            const q = buildQuery("가");
+            const t = preprocessTarget("값");
+            expect(match(q, t)).not.toBeNull();
+            expect(matchBest(q, t)).not.toBeNull();
         });
     });
 
@@ -333,17 +398,17 @@ describe("spillMode + composingIndex", () => {
 
     describe("tailSpillPenalty는 spillMode=always에서만 적용", () => {
         it("기본 모드에서는 tailSpillPenalty 설정해도 점수 차이 없음", () => {
-            const query = buildQuery("절");
-            const target = preprocessTarget("전라");
-            // 기본(composingOrLast) + composingIndex=undefined → "절" composing → tail spill 허용
+            // 쿼리 '읽'=[ㅇㅣㄹㄱ] vs '일기': anchor '일' 잉여 [ㄹ] == tail prefix [ㄹ], ㄱ은 '기' 초성으로 spill.
+            const query = buildQuery("읽");
+            const target = preprocessTarget("일기");
             const r0 = matchBest(query, target, { weights: { tailSpillPenalty: 0 } })!;
             const rNeg = matchBest(query, target, { weights: { tailSpillPenalty: -100 } })!;
             expect(r0.score).toBe(rNeg.score);
         });
 
         it("spillMode=always에서만 tailSpillPenalty가 실제 적용", () => {
-            const query = buildQuery("절");
-            const target = preprocessTarget("전라");
+            const query = buildQuery("읽");
+            const target = preprocessTarget("일기");
             const r0 = matchBest(query, target, { weights: { tailSpillPenalty: 0 } }, undefined, "always")!;
             const rNeg = matchBest(query, target, { weights: { tailSpillPenalty: -100 } }, undefined, "always")!;
             expect(r0.score! - rNeg.score!).toBe(100);
