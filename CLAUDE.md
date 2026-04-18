@@ -82,12 +82,24 @@ Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClo
 
 초성-only grapheme과 non-Hangul(ASCII, 이모지)은 spillMode 영향을 받지 않는다.
 
-**세션 최적화**: `createSearcher`는 직전 호출 대비 `spillMode`/`composingIndex`가 바뀌면 세션을 자동 리셋한다.
+**세션 최적화**: `createSearcher`는 직전 호출 대비 `spillMode`/`composingIndex`/`whitespace`가 바뀌면 세션을 자동 리셋한다.
+
+### whitespace 모드 (공백 처리)
+
+**`WhitespaceMode`** (`SearchOptions.whitespace`, `buildQuery` 2번째 인자 `{ whitespace }`):
+| 값 | 동작 |
+|---|---|
+| `"literal"` (**기본값**) | 공백을 일반 atom으로 취급. `"a b"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일) |
+| `"ignore"` | 쿼리에서 공백 grapheme을 제거 후 매칭. `"a b"` ≡ `"ab"` (VSCode 파일 검색 스타일) |
+
+`ignore` 모드는 `buildQuery`에서 공백 grapheme을 drop하는 전처리만 수행. `match`/`matchBest` 알고리즘은 변경 없음. `matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
+
+`ignore` 모드에서도 `Query.charIndexes`/`graphemeIndexes`는 **원본 input의 UTF-16 좌표를 유지**하므로, caller는 raw char offset 기준의 `composingIndex`를 그대로 전달하면 된다. 공백 char 위치의 `graphemeIndexes`는 "다음 non-space grapheme 인덱스"로 매핑된다 (후행 공백이면 `graphemes.length` → 조합중 없음으로 해석).
 
 ## Public API (`src/index.ts`)
 
 ```
-buildQuery(input) → Query
+buildQuery(input, opts?: { whitespace? }) → Query
 preprocessTarget(input) → Target
 match(query, target, composingIndex?, spillMode?) → MatchResult | null
 matchBest(query, target, scoring?, composingIndex?, spillMode?) → MatchResult | null (score 포함)
@@ -98,7 +110,9 @@ createSearcher(items, opts?) → Searcher (session 최적화 내장)
 hasDynamicAtoms() / snapshotDynamicAtoms() / restoreDynamicAtoms()
 ```
 
-주요 타입: `SpillMode` = `"always" | "composing" | "composingOrLast"` (기본 `"composingOrLast"`).
+주요 타입:
+- `SpillMode` = `"always" | "composing" | "composingOrLast"` (기본 `"composingOrLast"`)
+- `WhitespaceMode` = `"literal" | "ignore"` (기본 `"literal"`)
 
 ## Conventions
 

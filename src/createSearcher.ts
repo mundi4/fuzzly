@@ -2,7 +2,16 @@ import { buildMatchRanges } from "./buildMatchRanges";
 import { buildQuery } from "./buildQuery";
 import { matchBest, matchLiteral } from "./match";
 import { preprocessTarget } from "./preprocessTarget";
-import type { MatchResult, Searcher, SearcherOptions, SearchOptions, SearchResult, SpillMode, Target } from "./types";
+import type {
+    MatchResult,
+    Searcher,
+    SearcherOptions,
+    SearchOptions,
+    SearchResult,
+    SpillMode,
+    Target,
+    WhitespaceMode,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Min-heap (score 오름차순) — limit > 0일 때 상위 N개만 유지
@@ -77,6 +86,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
     let prevLiteral = false;
     let prevSpillMode: SpillMode | undefined;
     let prevComposingIndex: number | null | undefined;
+    let prevWhitespace: WhitespaceMode | undefined;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
@@ -84,6 +94,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         prevLiteral = false;
         prevSpillMode = undefined;
         prevComposingIndex = undefined;
+        prevWhitespace = undefined;
         prevMatchedIndices = null;
     }
 
@@ -93,15 +104,16 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const limit = searchOpts.limit ?? 0;
             const scoringOpt = searchOpts.scoring;
             const spillMode = searchOpts.spillMode;
+            const whitespace: WhitespaceMode = searchOpts.whitespace ?? "literal";
             const resolveScoringConfig =
                 typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
 
             // 세션 연속 판단을 위한 atom 시퀀스
-            const query = searchOpts.literal ? null : buildQuery(queryInput);
+            const query = searchOpts.literal ? null : buildQuery(queryInput, { whitespace });
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
             // 현재 atoms가 이전 atoms의 확장인가?
-            // 매칭 모드(literal/fuzzy)나 spillMode/composingIndex 상태가 달라지면 세션 단절
+            // 매칭 모드(literal/fuzzy)나 spillMode/composingIndex/whitespace 상태가 달라지면 세션 단절
             const currentLiteral = !!searchOpts.literal;
             const sessionIndices =
                 prevAtoms.length > 0 &&
@@ -110,6 +122,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 prevLiteral === currentLiteral &&
                 prevSpillMode === spillMode &&
                 prevComposingIndex === composingIndex &&
+                prevWhitespace === whitespace &&
                 prevMatchedIndices !== null
                     ? prevMatchedIndices
                     : null;
@@ -185,6 +198,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             prevLiteral = currentLiteral;
             prevSpillMode = spillMode;
             prevComposingIndex = composingIndex;
+            prevWhitespace = whitespace;
             prevMatchedIndices = matchedIndices;
 
             return results;

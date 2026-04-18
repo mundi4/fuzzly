@@ -40,13 +40,24 @@ export interface QueryGrapheme {
 }
 
 /**
+ * 쿼리 공백 처리 정책.
+ *
+ * - `"literal"` (기본): 공백을 일반 atom으로 취급. `"ab cd"`는 target에 literal 공백이 있어야 매치
+ * - `"ignore"`: 쿼리에서 공백 grapheme을 제거 후 매칭. `"ab cd"` ≡ `"abcd"` (VSCode 파일 검색 스타일)
+ *
+ * ignore 모드에서도 `Query.charIndexes`/`graphemeIndexes`는 원본 input 좌표를 유지하므로
+ * `composingIndex`는 caller의 raw char offset 그대로 전달하면 된다.
+ */
+export type WhitespaceMode = "literal" | "ignore";
+
+/**
  * `buildQuery`의 출력. 사용자 입력을 grapheme 단위로 분해한 결과.
  * `match`, `matchBest`의 첫 번째 인자로 사용한다.
  */
 export interface Query {
     /** 원본 입력 문자열 */
     input: string;
-    /** grapheme별 분해 정보 배열 */
+    /** grapheme별 분해 정보 배열. `whitespace: "ignore"`면 공백 grapheme은 제외됨 */
     graphemes: QueryGrapheme[];
     /**
      * 모든 grapheme의 atoms를 연결한 문자열.
@@ -57,13 +68,18 @@ export interface Query {
     /**
      * grapheme i → 원본 입력의 UTF-16 시작 문자 위치.
      * `composingIndex`(char index)를 grapheme 인덱스로 변환할 때 사용한다.
+     * ignore 모드에서도 **원본 input의 UTF-16 offset**을 가리킨다.
      */
     charIndexes: Uint16Array;
     /**
-     * UTF-16 문자 위치 → grapheme 인덱스 매핑.
+     * 원본 input의 UTF-16 문자 위치 → grapheme 인덱스 매핑.
      * multi-codepoint cluster 내의 모든 문자가 같은 grapheme 인덱스를 가리킨다.
+     * ignore 모드에서 공백 위치는 **다음 non-space grapheme 인덱스**로 매핑된다
+     * (후행 공백이면 `graphemes.length`).
      */
     graphemeIndexes: Uint16Array;
+    /** 이 Query가 빌드된 공백 처리 모드 */
+    whitespace: WhitespaceMode;
 }
 
 /**
@@ -208,6 +224,12 @@ export type SearchOptions = {
     scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
     /** finalized 구조 엄격성 정책. 기본값: `"composingOrLast"` */
     spillMode?: SpillMode;
+    /**
+     * 쿼리 공백 처리 정책. 기본값: `"literal"` (현재 동작, 백워드 호환).
+     * `"ignore"`로 지정하면 쿼리에서 공백 grapheme을 제거 후 매칭.
+     * @see {@link WhitespaceMode}
+     */
+    whitespace?: WhitespaceMode;
 };
 
 export type SearchResult<T = string> = {

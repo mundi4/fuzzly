@@ -20,4 +20,5 @@ export type {
     SearchResult,
     SpillMode,
     Target,
+    WhitespaceMode,
 } from "./types";
