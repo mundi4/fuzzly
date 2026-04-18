@@ -37,6 +37,12 @@ export interface QueryGrapheme {
     vowelIndex: number;
     /** atoms 내 종성(tail) 시작 위치. 종성이 없으면 -1. */
     tailIndex: number;
+    /**
+     * tail atom이 2개 이상(ㄶ/ㄺ 등 compound jongseong 유래).
+     * IME 결합 중간상태로 해석되어 spillMode 완화 판정에 사용된다
+     * (composing grapheme 바로 앞 위치에서만 적용).
+     */
+    hasCompoundTail: boolean;
 }
 
 /**
@@ -202,6 +208,10 @@ export type ScoringWeights = {
  *
  * Finalized + 모음 포함 grapheme은 anchor target grapheme과 atom 시퀀스가
  * 정확히 일치해야 매치된다 (tail spill 금지 + anchor 잉여 atom 금지).
+ *
+ * **Compound jongseong 예외**: composing 바로 앞 위치의 finalized grapheme이
+ * compound jongseong(ㄶ/ㄺ 등 `hasCompoundTail=true`)을 포함하면 자동으로
+ * 조합중으로 승격된다 — IME 결합 중간상태 대응 (예: `막엲ㄱ` vs `막연하게` 매치).
  *
  * `composingIndex`는 쿼리 문자열의 UTF-16 인덱스이며 호출 시점마다 변하는 상태이므로
  * `SearchOptions`에 포함되지 않고 `search()` 함수의 별도 인자로 전달한다.

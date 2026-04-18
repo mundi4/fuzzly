@@ -62,6 +62,7 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
         }
 
         const { vowelIndex, tailIndex } = computeAtomRoles(atoms);
+        const hasCompoundTail = tailIndex !== -1 && atoms.length - tailIndex >= 2;
 
         tmpCharIndexes[graphemeIndex] = startIndex;
         for (let i = 0; i < rawGrapheme.length; i++) {
@@ -73,6 +74,7 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
             atoms,
             vowelIndex,
             tailIndex,
+            hasCompoundTail,
         });
         graphemeIndex++;
     }

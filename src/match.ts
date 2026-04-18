@@ -18,6 +18,10 @@ import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, SpillMode
  *    "염"=[ㅇㅕㅁ] vs anchor "연"=[ㅇㅕㄴ]은 잉여 ㄴ이 tail ㅁ과 불일치 → reject)
  * - 확정(finalized) + 모음 포함 grapheme은 타겟 anchor grapheme과 atom 시퀀스가 정확히 일치해야 함
  *   (= tail spill 금지 AND anchor 잉여 atom 금지)
+ * - **예외**: composing 바로 앞(`resolved === gi + 1`) 위치의 finalized grapheme이
+ *   compound jongseong(ㄶ/ㄺ 등, tail atom 2개 이상)을 포함하면 조합중으로 승격된다.
+ *   IME에서 `연`+`ㅎ`→`엲` 후 다음 키 입력으로 `엲`이 finalized된 중간상태를 수용
+ *   (예: `막엲ㄱ` vs `막연하게` 매치). Single jongseong은 모든 위치에서 strict.
  *
  * Atoms = Uint8Array (정수 ID). 비교는 모두 정수 비교.
  * Target은 flat typed array 레이아웃 (atomsFlat, atomStarts, atomLens, vowelIdxs, tailIdxs).
@@ -64,8 +68,12 @@ function resolveComposingGrapheme(
     return COMPOSING_NONE;
 }
 
-function isGraphemeComposing(resolved: number, gi: number): boolean {
-    return resolved === COMPOSING_ALL || resolved === gi;
+function isGraphemeComposing(resolved: number, gi: number, qg: QueryGrapheme): boolean {
+    if (resolved === COMPOSING_ALL || resolved === gi) return true;
+    // compound jongseong(ㄶ/ㄺ 등)이 finalized로 남는 건 "바로 다음 grapheme이 composing"일 때뿐.
+    // IME가 더 이상 결합할 수 없어 자연히 finalized된 중간상태이므로 관대하게 처리.
+    if (qg.hasCompoundTail && resolved === gi + 1) return true;
+    return false;
 }
 
 function buildMatchResult(indices: number[], target: Target, queryGraphemes: QueryGrapheme[]): MatchResult {
@@ -140,7 +148,7 @@ export function match(
         const qAtoms = qg.atoms;
         const qVowelStart = qg.vowelIndex;
         const qTailStart = qg.tailIndex;
-        const isComp = isGraphemeComposing(resolvedComposing, qi);
+        const isComp = isGraphemeComposing(resolvedComposing, qi, qg);
 
         if (qVowelStart === -1) {
             // 중성 없음
@@ -611,7 +619,7 @@ export function matchBest(
     // Phase 1: 후보 수집
     const allCandidates: Candidate[][] = [];
     for (let qi = 0; qi < Q; qi++) {
-        const isComp = isGraphemeComposing(resolvedComposing, qi);
+        const isComp = isGraphemeComposing(resolvedComposing, qi, qGraphemes[qi]);
         const candidates = findCandidates(qGraphemes[qi], target, 0, isComp);
         if (candidates.length === 0) return null;
         allCandidates.push(candidates);

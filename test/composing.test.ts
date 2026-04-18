@@ -414,4 +414,89 @@ describe("spillMode + composingIndex", () => {
             expect(r0.score! - rNeg.score!).toBe(100);
         });
     });
+
+    describe("규칙 E — composing 바로 앞 finalized compound jongseong은 확장 composing 승격", () => {
+        // IME 결합 시나리오: 사용자가 "막연하게"를 치는 도중
+        // "막"(확정) + "연"(확정) + "ㅎ"(연에 흡수되어 엲) + "ㄱ"(새 composing)
+        // → 쿼리 문자열은 "막엲ㄱ". "엲"은 finalized이지만 compound jongseong(ㄶ)이므로
+        // composing 바로 앞에서만 관대 처리 (tail의 ㅎ을 다음 syllable로 spill).
+        it("'막엲ㄱ' → '막연하게' 매치 (default composingOrLast)", () => {
+            const q = buildQuery("막엲ㄱ");
+            const t = preprocessTarget("막연하게");
+            const r = match(q, t);
+            expect(r).not.toBeNull();
+            expect(r!.indices).toEqual([0, 1, 2, 3]);
+            const rBest = matchBest(q, t);
+            expect(rBest).not.toBeNull();
+            expect(rBest!.indices).toEqual([0, 1, 2, 3]);
+        });
+
+        it("'앓ㄱ' → '알하고' 매치 (compound ㄹㅎ의 ㄹ anchor 소진, ㅎ spill, ㄱ initial)", () => {
+            const q = buildQuery("앓ㄱ");
+            const t = preprocessTarget("알하고");
+            const r = match(q, t);
+            expect(r).not.toBeNull();
+            expect(r!.indices).toEqual([0, 1, 2]);
+            const rBest = matchBest(q, t);
+            expect(rBest).not.toBeNull();
+            expect(rBest!.indices).toEqual([0, 1, 2]);
+        });
+
+        it("'막엲고' → '막연하고' 매치 (default last='고', 바로 앞 '엲' 완화)", () => {
+            const q = buildQuery("막엲고");
+            const t = preprocessTarget("막연하고");
+            const r = match(q, t);
+            expect(r).not.toBeNull();
+            expect(r!.indices).toEqual([0, 1, 2, 3]);
+            const rBest = matchBest(q, t);
+            expect(rBest).not.toBeNull();
+            expect(rBest!.indices).toEqual([0, 1, 2, 3]);
+        });
+
+        it("'막엲ㄱ' + composingIndex=3 (ㄱ의 char index) → '막연하게' 매치", () => {
+            const q = buildQuery("막엲ㄱ");
+            const t = preprocessTarget("막연하게");
+            // "ㄱ"의 char index는 2 (막=0, 엲=1, ㄱ=2)
+            expect(match(q, t, 2, "composing")).not.toBeNull();
+            expect(matchBest(q, t, undefined, 2, "composing")).not.toBeNull();
+        });
+
+        it("'막엲ㄱ' + composingIndex=null → '막연하게' 매치 X (명시적 none → strict)", () => {
+            const q = buildQuery("막엲ㄱ");
+            const t = preprocessTarget("막연하게");
+            // null은 "조합중 없음" 명시 → 완화 금지 → "엲" strict → fail
+            expect(match(q, t, null)).toBeNull();
+            expect(matchBest(q, t, undefined, null)).toBeNull();
+        });
+
+        it("'엲' 단독 + composingIndex=null → '연하' 매치 X (strict)", () => {
+            const q = buildQuery("엲");
+            const t = preprocessTarget("연하");
+            expect(match(q, t, null)).toBeNull();
+            expect(matchBest(q, t, undefined, null)).toBeNull();
+        });
+
+        it("'갉각' → '각각' 매치 X (compound 완화되지만 anchor-extras-prefix ㄱ≠ㄹ 차단)", () => {
+            const q = buildQuery("갉각");
+            const t = preprocessTarget("각각");
+            expect(match(q, t)).toBeNull();
+            expect(matchBest(q, t)).toBeNull();
+        });
+
+        it("'엲ㄱ' → '염가' 매치 X (anchor-extras-prefix ㅁ≠ㄴ 차단)", () => {
+            const q = buildQuery("엲ㄱ");
+            const t = preprocessTarget("염가");
+            expect(match(q, t)).toBeNull();
+            expect(matchBest(q, t)).toBeNull();
+        });
+
+        it("compound jongseong이 composing 직전 아니면 strict ('엲' 비-인접 위치)", () => {
+            // Q=[엲, 고, ㄱ], resolved=2(ㄱ). 첫 '엲'은 gi=0, 0+1=1 !== 2 → strict.
+            // target에 '엲'이 직접 있어야 strict 매치됨. '연'에는 매치 안 됨.
+            const q = buildQuery("엲고ㄱ");
+            const t = preprocessTarget("연고기");
+            expect(match(q, t)).toBeNull();
+            expect(matchBest(q, t)).toBeNull();
+        });
+    });
 });

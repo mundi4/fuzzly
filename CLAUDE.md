@@ -82,6 +82,8 @@ Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClo
 
 초성-only grapheme과 non-Hangul(ASCII, 이모지)은 spillMode 영향을 받지 않는다.
 
+**Compound jongseong 예외**: composing 바로 앞(`resolvedComposing === gi + 1`) 위치의 finalized grapheme이 compound jongseong(ㄶ/ㄺ/ㄻ/ㄼ/ㄽ/ㄾ/ㄿ/ㅀ/ㄳ/ㄵ/ㅄ)을 포함하면 "확장 composing"으로 승격되어 tail spill + anchor-extras-prefix 룰이 적용된다. IME에서 compound jongseong이 finalized로 남는 건 이 위치에서만 자연 발생 (예: `연`+`ㅎ`→`엲` 뒤에 `ㄱ` 입력 → `막엲ㄱ` vs `막연하게` 매치). Single jongseong은 모든 위치에서 strict.
+
 **세션 최적화**: `createSearcher`는 직전 호출 대비 `spillMode`/`composingIndex`/`whitespace`가 바뀌면 세션을 자동 리셋한다.
 
 ### whitespace 모드 (공백 처리)
