@@ -57,6 +57,39 @@ describe("spillMode + composingIndex", () => {
         });
     });
 
+    describe("규칙 C — spill된 자음은 이후 grapheme의 초성에만 매치", () => {
+        it("'염' → '연범' 매치 X (범의 종성 ㅁ에 spill 금지)", () => {
+            const q = buildQuery("염");
+            const t = preprocessTarget("연범");
+            expect(match(q, t, undefined, "always")).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, "always")).toBeNull();
+        });
+
+        it("'염' → '막연하게 평범한 머그컵' 매치는 연+머 (범 종성 아님)", () => {
+            const q = buildQuery("염");
+            const t = preprocessTarget("막연하게 평범한 머그컵");
+            const r = match(q, t, undefined, "always");
+            expect(r?.indices).toEqual([1, 9]);
+            const rb = matchBest(q, t, undefined, undefined, "always");
+            expect(rb?.indices).toEqual([1, 9]);
+        });
+
+        it("'염' → '연머' 매치 O (머 초성 ㅁ에 spill)", () => {
+            const q = buildQuery("염");
+            const t = preprocessTarget("연머");
+            const r = match(q, t, undefined, "always");
+            expect(r?.indices).toEqual([0, 1]);
+        });
+
+        it("anchor 잉여는 여전히 허용: '읽' composing → '일기' 매치 O", () => {
+            // 일의 종성 ㄹ은 anchor 내부 → 잉여 atom 매치 허용. ㄱ은 기의 초성으로 spill.
+            const q = buildQuery("읽");
+            const t = preprocessTarget("일기");
+            const r = match(q, t, 0);
+            expect(r?.indices).toEqual([0, 1]);
+        });
+    });
+
     describe("spillMode 분기", () => {
         it("'always' + composingIndex=null → 모든 grapheme 관대", () => {
             const q = buildQuery("은");

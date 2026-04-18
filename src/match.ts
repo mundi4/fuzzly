@@ -230,7 +230,8 @@ export function match(
             continue;
         }
 
-        // 종성 처리 (spill 허용)
+        // 종성 처리 (spill 허용). 단, spill되어 다음 grapheme으로 넘어간 뒤에는
+        // 초성(position 0)에만 매치 허용 — 종성으로 검색하는 사용자는 없다.
         let curTgi = anchorTgi;
         let tai = target.atomStarts[anchorTgi] + qLeadVowelEnd;
         let lastMatchedTgi = anchorTgi;
@@ -241,13 +242,17 @@ export function match(
 
             while (curTgi < T) {
                 const tStart = target.atomStarts[curTgi];
-                const tEnd = tStart + target.atomLens[curTgi];
                 let idx = -1;
-                for (let i = tai; i < tEnd; i++) {
-                    if (target.atomsFlat[i] === needle) {
-                        idx = i;
-                        break;
+                if (curTgi === anchorTgi) {
+                    const tEnd = tStart + target.atomLens[curTgi];
+                    for (let i = tai; i < tEnd; i++) {
+                        if (target.atomsFlat[i] === needle) {
+                            idx = i;
+                            break;
+                        }
                     }
+                } else if (target.atomsFlat[tStart] === needle) {
+                    idx = tStart;
                 }
                 if (idx !== -1) {
                     tai = idx + 1;
@@ -376,13 +381,17 @@ function matchTailFrom(
 
         while (curTgi < T) {
             const tStart = target.atomStarts[curTgi];
-            const tEnd = tStart + target.atomLens[curTgi];
             let idx = -1;
-            for (let i = tai; i < tEnd; i++) {
-                if (target.atomsFlat[i] === needle) {
-                    idx = i;
-                    break;
+            if (curTgi === anchorTgi) {
+                const tEnd = tStart + target.atomLens[curTgi];
+                for (let i = tai; i < tEnd; i++) {
+                    if (target.atomsFlat[i] === needle) {
+                        idx = i;
+                        break;
+                    }
                 }
+            } else if (target.atomsFlat[tStart] === needle) {
+                idx = tStart;
             }
             if (idx !== -1) {
                 tai = idx + 1;
