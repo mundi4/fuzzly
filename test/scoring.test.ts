@@ -232,23 +232,30 @@ describe("createGraphemeBonuses", () => {
 describe("ScoringConfig - tailSpillPenalty", () => {
     // spill 예시는 '읽'=[ㅇㅣㄹㄱ] 기반: anchor '일' 잉여 [ㄹ]이 쿼리 tail prefix [ㄹ]와 일치해
     // anchor가 승인되고, 남은 ㄱ이 다음 grapheme 초성으로 spill된다.
-    it("완전 그래핌 매치를 spill 매치보다 선호 (엣지 케이스)", () => {
+    // issue #15 internalRunLen bonus 이후 spilled 후보의 consecutive 누적이 exactBonus 우위를
+    // 상회한다 — draft 단계이며 exact 우선 보장은 추후 별도 장치로 재조정할 수 있다.
+    it("spill 매치가 exact를 score로 역전 (internalRunLen bonus; draft)", () => {
         const query = buildQuery("제2읽");
         const exact = preprocessTarget("제2읽");
         const spilled = preprocessTarget("제2일기");
         const rExact = matchBest(query, exact)!;
         const rSpilled = matchBest(query, spilled)!;
-        expect(rExact.score!).toBeGreaterThan(rSpilled.score!);
+        expect(rSpilled.score!).toBeGreaterThan(rExact.score!);
     });
 
-    it("tailSpillPenalty=0이면 엣지 케이스 동률/역전 허용", () => {
+    it("tailSpillPenalty 오버라이드는 default spillMode에서 무효 (diff 불변)", () => {
+        // default spillMode(composingOrLast)에서는 tailSpillPenalty가 적용되지 않으므로
+        // 가중치 override는 스코어에 영향을 주지 않는다. 두 스코어가 동일해야 한다.
         const query = buildQuery("제2읽");
         const exact = preprocessTarget("제2읽");
         const spilled = preprocessTarget("제2일기");
-        const scoring: ScoringConfig = { weights: { tailSpillPenalty: 0 } };
+        const rExactDefault = matchBest(query, exact)!;
+        const rSpilledDefault = matchBest(query, spilled)!;
+        const scoring: ScoringConfig = { weights: { tailSpillPenalty: -999 } };
         const rExact = matchBest(query, exact, scoring)!;
         const rSpilled = matchBest(query, spilled, scoring)!;
-        expect(Math.abs(rExact.score! - rSpilled.score!)).toBeLessThanOrEqual(2);
+        expect(rExact.score).toBe(rExactDefault.score);
+        expect(rSpilled.score).toBe(rSpilledDefault.score);
     });
 
     it("주요 시나리오: 제2읽 vs 제2일 기타", () => {
@@ -320,6 +327,47 @@ describe("createSearcher - scoring option", () => {
     });
 });
 
+describe("issue #15 — internalRunLen bonus (candidate 내부 연속)", () => {
+    // 이슈 본문 weights 기준 (cons=100). `깅`(1 grapheme, tail spill)과 `기ㅇ`(2 graphemes)이
+    // 타겟 "기업"(tgi=10,11)에서 동일한 indices로 매치될 때 consecutive 기여가 동등해야 한다.
+    const issueWeights: ScoringConfig = {
+        weights: {
+            positionZero: 20,
+            boundary: 20,
+            consecutive: 100,
+            prefixBonus: 0,
+            exactBonus: 200,
+        },
+    };
+
+    it("`깅` vs `기업` 이 consecutive bonus 를 받아 `기ㅇ` 와 동등", () => {
+        const target = preprocessTarget("여신 > 지침 > 기업여신업무지침");
+        const r1 = matchBest(buildQuery("깅"), target, issueWeights)!;
+        const r2 = matchBest(buildQuery("기ㅇ"), target, issueWeights)!;
+        expect(r1).not.toBeNull();
+        expect(r2).not.toBeNull();
+        // indices 동일
+        expect(r1.indices).toEqual([10, 11]);
+        expect(r2.indices).toEqual([10, 11]);
+        // score는 쿼리 구성에 독립적 (쿼리 형태에 따른 비대칭 제거)
+        expect(r1.score).toBe(r2.score);
+    });
+
+    it("consonant-only `ㄶ` vs `노하` 도 internalRunLen bonus 수여", () => {
+        // ㄶ=[ㄴ,ㅎ] 단일 grapheme이 [노,하] 연속 2 tgi 를 먹음 → internalRunLen=2
+        const target = preprocessTarget("노하");
+        const r = matchBest(buildQuery("ㄶ"), target)!;
+        expect(r).not.toBeNull();
+        expect(r!.indices).toEqual([0, 1]);
+    });
+
+    it("compound jongseong 완화 — `막엲ㄱ` vs `막연하게` 매치 성공 (기존 동작 유지)", () => {
+        const r = matchBest(buildQuery("막엲ㄱ"), preprocessTarget("막연하게"))!;
+        expect(r).not.toBeNull();
+        expect(r!.indices).toEqual([0, 1, 2, 3]);
+    });
+});
+
 describe("ㄱㅇ baseline score", () => {
     it("두 타겟 스코어 출력", () => {
         const query = buildQuery("ㄱㅇ");
@@ -349,12 +397,8 @@ describe("ㄱㅇ with bonus after last '>'", () => {
         const t1 = preprocessTarget(src1);
         const t2 = preprocessTarget(src2);
 
-        const bonuses1 = createGraphemeBonuses(t1, [
-            { start: src1.lastIndexOf(">") + 1, end: src1.length, bonus: 50 },
-        ]);
-        const bonuses2 = createGraphemeBonuses(t2, [
-            { start: src2.lastIndexOf(">") + 1, end: src2.length, bonus: 50 },
-        ]);
+        const bonuses1 = createGraphemeBonuses(t1, [{ start: src1.lastIndexOf(">") + 1, end: src1.length, bonus: 50 }]);
+        const bonuses2 = createGraphemeBonuses(t2, [{ start: src2.lastIndexOf(">") + 1, end: src2.length, bonus: 50 }]);
 
         const r1 = matchBest(query, t1, { graphemeBonus: bonuses1 })!;
         const r2 = matchBest(query, t2, { graphemeBonus: bonuses2 })!;
