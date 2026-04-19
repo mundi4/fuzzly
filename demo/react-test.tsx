@@ -36,8 +36,8 @@ function nowStr(): string {
 const SUSPICIOUS_WINDOW_MS = 50;
 
 function App() {
-    const inputRef = useRef<HTMLInputElement>(null);
-    const emit = useFuzzlyInput(inputRef);
+    const emit = useFuzzlyInput<HTMLInputElement>();
+    const { ref, element: inputRef } = emit;
 
     const [rawLog, setRawLog] = useState<RawEvent[]>([]);
     const [emitLog, setEmitLog] = useState<EmitEntry[]>([]);
@@ -206,7 +206,7 @@ function App() {
             <div className="pane">
                 <h3>입력 (한글 IME로 타이핑 — uncontrolled input + useFuzzlyInput)</h3>
                 <input
-                    ref={inputRef}
+                    ref={ref}
                     defaultValue=""
                     autoComplete="off"
                     autoCorrect="off"
