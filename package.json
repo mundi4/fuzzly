@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "tsup src/index.ts src/score.ts --dts --format esm,cjs,iife --global-name fuzzly",
+    "dev": "vite",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:ui": "vitest",
     "check": "biome check",
@@ -25,6 +27,7 @@
     "@types/node": "^25.0.2",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.15"
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
   }
 }
