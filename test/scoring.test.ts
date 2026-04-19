@@ -319,3 +319,52 @@ describe("createSearcher - scoring option", () => {
         expect(results.length).toBe(2);
     });
 });
+
+describe("ㄱㅇ baseline score", () => {
+    it("두 타겟 스코어 출력", () => {
+        const query = buildQuery("ㄱㅇ");
+        const t1 = preprocessTarget("기업금융인력 운영 및 양성 > 제1장 총칙");
+        const t2 = preprocessTarget("여신 > 지침 > 기업여신업무지침");
+
+        const r1 = matchBest(query, t1)!;
+        const r2 = matchBest(query, t2)!;
+
+        console.log("T1 score:", r1.score, "indices:", r1.indices);
+        console.log("T2 score:", r2.score, "indices:", r2.indices);
+
+        expect(r1.score).toBe(299);
+        expect(r1.indices).toEqual([0, 1]);
+        expect(r2.score).toBe(94);
+        expect(r2.indices).toEqual([10, 11]);
+    });
+});
+
+describe("ㄱㅇ with bonus after last '>'", () => {
+    it("마지막 > 이후 char에 +50", () => {
+        const query = buildQuery("ㄱㅇ");
+
+        const src1 = "기업금융인력 운영 및 양성 > 제1장 총칙";
+        const src2 = "여신 > 지침 > 기업여신업무지침";
+
+        const t1 = preprocessTarget(src1);
+        const t2 = preprocessTarget(src2);
+
+        const bonuses1 = createGraphemeBonuses(t1, [
+            { start: src1.lastIndexOf(">") + 1, end: src1.length, bonus: 50 },
+        ]);
+        const bonuses2 = createGraphemeBonuses(t2, [
+            { start: src2.lastIndexOf(">") + 1, end: src2.length, bonus: 50 },
+        ]);
+
+        const r1 = matchBest(query, t1, { graphemeBonus: bonuses1 })!;
+        const r2 = matchBest(query, t2, { graphemeBonus: bonuses2 })!;
+
+        console.log("T1 boosted score:", r1.score, "indices:", r1.indices);
+        console.log("T2 boosted score:", r2.score, "indices:", r2.indices);
+
+        expect(r1.score).toBe(299);
+        expect(r1.indices).toEqual([0, 1]);
+        expect(r2.score).toBe(194);
+        expect(r2.indices).toEqual([10, 11]);
+    });
+});
