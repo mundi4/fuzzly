@@ -499,4 +499,119 @@ describe("spillMode + composingIndex", () => {
             expect(matchBest(q, t)).toBeNull();
         });
     });
+
+    describe("allowChoseongMatch=false — journey 매칭만 허용", () => {
+        // target "막연하게"에 대한 journey 시나리오:
+        //   composing 위치의 초성-only/완전음절은 허용 (IME 중간상태)
+        //   finalized 초성-only, finalized compound jongseong(엲) → 차단
+        const target = () => preprocessTarget("막연하게");
+
+        // --- 매치 O: journey의 유효한 중간상태 ---
+        it("'ㅁ' + composingIndex=0 → OK (composing 초성-only 예외)", () => {
+            const q = buildQuery("ㅁ");
+            const t = target();
+            expect(match(q, t, 0, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, 0, undefined, false)).not.toBeNull();
+        });
+
+        it("'마' + composingIndex=0 → OK (composing 부분 조합)", () => {
+            const q = buildQuery("마");
+            const t = target();
+            expect(match(q, t, 0, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, 0, undefined, false)).not.toBeNull();
+        });
+
+        it("'막' → OK (완전 음절, default last=composing)", () => {
+            const q = buildQuery("막");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).not.toBeNull();
+        });
+
+        it("'막ㅇ' + composingIndex=1 → OK (composing ㅇ)", () => {
+            const q = buildQuery("막ㅇ");
+            const t = target();
+            expect(match(q, t, 1, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, 1, undefined, false)).not.toBeNull();
+        });
+
+        it("'막여' + composingIndex=1 → OK", () => {
+            const q = buildQuery("막여");
+            const t = target();
+            expect(match(q, t, 1, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, 1, undefined, false)).not.toBeNull();
+        });
+
+        it("'막연' → OK (완전 음절 2개, default last composing)", () => {
+            const q = buildQuery("막연");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).not.toBeNull();
+        });
+
+        it("'막엲' → OK (엲이 composing, journey 중간상태)", () => {
+            const q = buildQuery("막엲");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).not.toBeNull();
+        });
+
+        it("'막연하' → OK", () => {
+            const q = buildQuery("막연하");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).not.toBeNull();
+        });
+
+        it("'막연학' → OK (composing '학'의 tail ㄱ이 '게' 초성 spill 허용)", () => {
+            const q = buildQuery("막연학");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).not.toBeNull();
+        });
+
+        it("'막연하게' → OK (완전 매치)", () => {
+            const q = buildQuery("막연하게");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).not.toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).not.toBeNull();
+        });
+
+        // --- 매치 X: 초성매치 시나리오 ---
+        it("'ㅁㅇㅎㄱ' → 실패 (전부 finalized 초성-only — default last=ㄱ만 composing)", () => {
+            const q = buildQuery("ㅁㅇㅎㄱ");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).toBeNull();
+        });
+
+        it("'ㅁㅇㅎㄱ' + composingIndex=3 → 실패 (앞 3개 finalized 초성-only)", () => {
+            const q = buildQuery("ㅁㅇㅎㄱ");
+            const t = target();
+            expect(match(q, t, 3, undefined, false)).toBeNull();
+            expect(matchBest(q, t, undefined, 3, undefined, false)).toBeNull();
+        });
+
+        it("'막엲ㄱ' → 실패 (compound 완화 off → 엲 strict → 연과 atom 불일치)", () => {
+            const q = buildQuery("막엲ㄱ");
+            const t = target();
+            expect(match(q, t, undefined, undefined, false)).toBeNull();
+            expect(matchBest(q, t, undefined, undefined, undefined, false)).toBeNull();
+        });
+
+        // --- Non-regression: 기본값 true에서 기존 동작 유지 ---
+        it("'ㅁㅇㅎㄱ' default(true) → OK (기존 동작 유지)", () => {
+            const q = buildQuery("ㅁㅇㅎㄱ");
+            const t = target();
+            expect(match(q, t)).not.toBeNull();
+            expect(matchBest(q, t)).not.toBeNull();
+        });
+
+        it("'막엲ㄱ' default(true) → OK (compound 완화 유지)", () => {
+            const q = buildQuery("막엲ㄱ");
+            const t = target();
+            expect(match(q, t)).not.toBeNull();
+            expect(matchBest(q, t)).not.toBeNull();
+        });
+    });
 });

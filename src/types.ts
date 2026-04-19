@@ -240,6 +240,18 @@ export type SearchOptions = {
      * @see {@link WhitespaceMode}
      */
     whitespace?: WhitespaceMode;
+    /**
+     * 초성(choseong) 전용 매칭 허용 여부. 기본값: `true` (기존 동작).
+     *
+     * `false`로 지정하면 "journey 매칭"만 허용:
+     * - Finalized 초성-only 쿼리 grapheme(예: `ㅁ`) → 매치 실패
+     *   (composing grapheme은 IME 타이핑 중간상태이므로 예외적으로 허용)
+     * - Finalized compound jongseong(ㄶ/ㄺ 등) 완화 비활성화 → `엲` 등이 다시 strict
+     *
+     * 즉 `ㅁㅇㅎㄱ` 같은 초성 나열 쿼리와 `막엲ㄱ`(IME 결합 중간상태)이 차단되며,
+     * `막ㅇ`·`막엲` 등 composing 위치의 유효한 IME journey는 계속 매치된다.
+     */
+    allowChoseongMatch?: boolean;
 };
 
 export type SearchResult<T = string> = {

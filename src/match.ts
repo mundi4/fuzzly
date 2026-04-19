@@ -28,6 +28,7 @@ import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, SpillMode
  */
 
 const DEFAULT_SPILL_MODE: SpillMode = "composingOrLast";
+const DEFAULT_ALLOW_CHOSEONG_MATCH = true;
 
 // resolveComposingGrapheme 반환 값 sentinel.
 // -2 = 모든 grapheme 조합중 취급 (spillMode === "always")
@@ -68,11 +69,17 @@ function resolveComposingGrapheme(
     return COMPOSING_NONE;
 }
 
-function isGraphemeComposing(resolved: number, gi: number, qg: QueryGrapheme): boolean {
+function isGraphemeComposing(
+    resolved: number,
+    gi: number,
+    qg: QueryGrapheme,
+    allowCompoundRelaxation: boolean,
+): boolean {
     if (resolved === COMPOSING_ALL || resolved === gi) return true;
     // compound jongseong(ㄶ/ㄺ 등)이 finalized로 남는 건 "바로 다음 grapheme이 composing"일 때뿐.
     // IME가 더 이상 결합할 수 없어 자연히 finalized된 중간상태이므로 관대하게 처리.
-    if (qg.hasCompoundTail && resolved === gi + 1) return true;
+    // allowChoseongMatch=false면 이 완화도 함께 비활성화 (ㅎ의 초성 spill을 허용하지 않음).
+    if (allowCompoundRelaxation && qg.hasCompoundTail && resolved === gi + 1) return true;
     return false;
 }
 
@@ -122,6 +129,8 @@ function buildMatchResult(indices: number[], target: Target, queryGraphemes: Que
  *   - `"always"`: 모든 grapheme을 조합중 취급 (기존 관대 동작)
  *   - `"composing"`: composingIndex가 지정한 것만 관대, 없으면 전부 엄격
  *   - `"composingOrLast"`: composingIndex 지정되면 그것만, 없으면 마지막 grapheme 자동 조합중 가정
+ * @param allowChoseongMatch - 초성-only 매칭 허용 여부 (기본값 `true`).
+ *   `false`면 finalized 초성-only 쿼리 grapheme과 compound jongseong 완화가 모두 차단된다.
  * @returns 매치되면 `MatchResult`, 아니면 `null`
  */
 export function match(
@@ -129,6 +138,7 @@ export function match(
     target: Target,
     composingIndex?: number | null,
     spillMode: SpillMode = DEFAULT_SPILL_MODE,
+    allowChoseongMatch: boolean = DEFAULT_ALLOW_CHOSEONG_MATCH,
 ): MatchResult | null {
     const qGraphemes = query.graphemes;
     const T = target.graphemeCount;
@@ -148,11 +158,15 @@ export function match(
         const qAtoms = qg.atoms;
         const qVowelStart = qg.vowelIndex;
         const qTailStart = qg.tailIndex;
-        const isComp = isGraphemeComposing(resolvedComposing, qi, qg);
+        const isComp = isGraphemeComposing(resolvedComposing, qi, qg, allowChoseongMatch);
 
         if (qVowelStart === -1) {
             // 중성 없음
             const isHangulCluster = isConsonantLUT[qAtoms[0]] === 1;
+
+            // allowChoseongMatch=false + 한글 초성-only + finalized → 초성매치 거부
+            // (composing grapheme은 IME 타이핑 중간상태이므로 예외 허용)
+            if (isHangulCluster && !isComp && !allowChoseongMatch) return null;
 
             if (isHangulCluster) {
                 // 한글 자음: 각 atom이 이후 타겟 음절의 초성(첫 atom)과 매치
@@ -511,7 +525,13 @@ function findExactCandidates(qAtoms: Atoms, target: Target, minTgi: number): Can
     return candidates;
 }
 
-function findCandidates(qg: QueryGrapheme, target: Target, minTgi: number, isComposing: boolean): Candidate[] {
+function findCandidates(
+    qg: QueryGrapheme,
+    target: Target,
+    minTgi: number,
+    isComposing: boolean,
+    allowChoseongMatch: boolean,
+): Candidate[] {
     if (qg.vowelIndex !== -1) {
         if (isComposing) {
             return findVowelCandidatesComposing(qg, target, minTgi);
@@ -520,6 +540,8 @@ function findCandidates(qg: QueryGrapheme, target: Target, minTgi: number, isCom
         return findExactCandidates(qg.atoms, target, minTgi);
     }
     if (isConsonantLUT[qg.atoms[0]] === 1) {
+        // allowChoseongMatch=false + 한글 초성-only + finalized → 후보 없음
+        if (!isComposing && !allowChoseongMatch) return [];
         return findConsonantCandidates(qg.atoms, target, minTgi);
     }
     return findExactCandidates(qg.atoms, target, minTgi);
@@ -587,6 +609,7 @@ function candidatePositionScore(
  * @param scoring - 스코어 가중치 / grapheme 보너스. `tailSpillPenalty`는 `spillMode === "always"` 에서만 적용
  * @param composingIndex - 조합중인 char의 UTF-16 인덱스 (number/null/undefined 의미는 {@link match} 참조)
  * @param spillMode - finalized 엄격성 정책 (기본값 `"composingOrLast"`)
+ * @param allowChoseongMatch - 초성-only 매칭 허용 여부 (기본값 `true`). {@link match} 참조
  * @returns 매치되면 `MatchResult` (with `score`), 아니면 `null`
  */
 export function matchBest(
@@ -595,6 +618,7 @@ export function matchBest(
     scoring?: ScoringConfig,
     composingIndex?: number | null,
     spillMode: SpillMode = DEFAULT_SPILL_MODE,
+    allowChoseongMatch: boolean = DEFAULT_ALLOW_CHOSEONG_MATCH,
 ): MatchResult | null {
     const qGraphemes = query.graphemes;
     const T = target.graphemeCount;
@@ -619,8 +643,8 @@ export function matchBest(
     // Phase 1: 후보 수집
     const allCandidates: Candidate[][] = [];
     for (let qi = 0; qi < Q; qi++) {
-        const isComp = isGraphemeComposing(resolvedComposing, qi, qGraphemes[qi]);
-        const candidates = findCandidates(qGraphemes[qi], target, 0, isComp);
+        const isComp = isGraphemeComposing(resolvedComposing, qi, qGraphemes[qi], allowChoseongMatch);
+        const candidates = findCandidates(qGraphemes[qi], target, 0, isComp, allowChoseongMatch);
         if (candidates.length === 0) return null;
         allCandidates.push(candidates);
     }

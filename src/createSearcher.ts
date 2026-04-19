@@ -87,6 +87,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
     let prevSpillMode: SpillMode | undefined;
     let prevComposingIndex: number | null | undefined;
     let prevWhitespace: WhitespaceMode | undefined;
+    let prevAllowChoseongMatch: boolean | undefined;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
@@ -95,6 +96,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         prevSpillMode = undefined;
         prevComposingIndex = undefined;
         prevWhitespace = undefined;
+        prevAllowChoseongMatch = undefined;
         prevMatchedIndices = null;
     }
 
@@ -105,6 +107,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const scoringOpt = searchOpts.scoring;
             const spillMode = searchOpts.spillMode;
             const whitespace: WhitespaceMode = searchOpts.whitespace ?? "literal";
+            const allowChoseongMatch = searchOpts.allowChoseongMatch;
             const resolveScoringConfig =
                 typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
 
@@ -123,6 +126,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 prevSpillMode === spillMode &&
                 prevComposingIndex === composingIndex &&
                 prevWhitespace === whitespace &&
+                prevAllowChoseongMatch === allowChoseongMatch &&
                 prevMatchedIndices !== null
                     ? prevMatchedIndices
                     : null;
@@ -146,6 +150,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                               resolveScoringConfig ? resolveScoringConfig(t) : undefined,
                               composingIndex,
                               spillMode,
+                              allowChoseongMatch,
                           )
                         : matchLiteral(queryInput, t);
                     if (result === null) continue;
@@ -181,6 +186,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                               resolveScoringConfig ? resolveScoringConfig(t) : undefined,
                               composingIndex,
                               spillMode,
+                              allowChoseongMatch,
                           )
                         : matchLiteral(queryInput, t);
                     if (result === null) continue;
@@ -199,6 +205,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             prevSpillMode = spillMode;
             prevComposingIndex = composingIndex;
             prevWhitespace = whitespace;
+            prevAllowChoseongMatch = allowChoseongMatch;
             prevMatchedIndices = matchedIndices;
 
             return results;
