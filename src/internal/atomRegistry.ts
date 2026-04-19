@@ -1,17 +1,26 @@
 // Atom ID Registry
-// 각 원자 문자(자모, ASCII 등)에 고정 정수 ID를 부여한다.
-// hot loop에서 문자열 비교 대신 정수 비교를 가능하게 하는 기반 모듈.
-
-// --- 고정 ID 할당 ---
-// 0: padding/sentinel (사용 안 함)
-// 1-19: 자음 (ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ)
-// 20-33: 기본모음 (ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ) — 분해 후 14종만
-// 34-128: ASCII printable (0x20-0x7E → ID 34+offset)
-// 129-65535: 동적 할당 (CJK, 기타) — Uint16Array 컨테이너
+// 모든 atom ID 할당이 순수함수 (글로벌 가변 상태 없음).
 //
-// LUT들(isVowelLUT 등)은 Uint8Array(256) 크기 그대로 유지한다.
-// 동적 ID(≥129)는 jamo/vowel/consonant가 아니므로 OOB read가
-// undefined로 들어와 `=== 1` 비교가 자연스럽게 false가 된다.
+// 규칙:
+// - 1-19: 자음 (ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ)
+// - 20-33: 기본모음 (ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ) — 분해 후 14종
+// - 34-128: ASCII printable (0x20-0x7E → ID 34+offset)
+// - 그 외: UTF-16 code unit 값 그대로 (codepoint-as-ID)
+//   · BMP 단일 codepoint: 1 atom (예: 漢 U+6F22 → ID 0x6F22)
+//   · non-BMP·multi-codepoint cluster: decomposeToAtoms가 code unit별로 N atom emit
+//     (예: 😀 → [0xD83D, 0xDE00], 👨‍👩‍👧 → 8 atoms)
+//
+// 결과: Target/Query가 self-contained. 세션·인스턴스·앱 간 portable.
+// snapshot/restore API 불필요.
+//
+// LUT(isVowelLUT 등)는 Uint8Array(256) 유지. 동적 영역(>128) ID는 LUT 인덱싱 시
+// OOB read → undefined → `=== 1` false. 의도된 동작.
+//
+// 충돌 주의 (실 사용에선 발생 안 함):
+// - 제어문자 U+0000-U+001F: ID 0-31 → 자모 영역(1-33)과 충돌
+// - U+007F (DEL): ID 127 → fixed ASCII '}' 와 충돌
+// - U+0080 (PADDING): ID 128 → fixed ASCII '~' 와 충돌
+// command palette 텍스트엔 등장하지 않음. caller가 control char 입력 줄 시 동작 미정의.
 
 const CONSONANTS = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"; // 19
 const VOWELS = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ"; // 14 basic (compound는 분해됨)
@@ -21,16 +30,12 @@ const FIRST_VOWEL_ID = 20;
 const FIRST_ASCII_ID = 34; // ASCII 0x20(' ') → 34
 const ASCII_START = 0x20;
 const ASCII_END = 0x7e;
-const DYNAMIC_START = FIRST_ASCII_ID + (ASCII_END - ASCII_START + 1); // 34 + 95 = 129
 
-// char → ID (고정 범위는 직접 계산, 나머지는 Map)
-const dynamicMap = new Map<string, number>();
-let nextDynamicId = DYNAMIC_START;
-
-// ID → char (역변환, 디버그/toString용). 동적 ID는 sparse로 확장됨.
+// ID → char (역변환, 디버그/toString용). fixed 영역만 채워두고
+// 그 외 ID는 atomIdToChar에서 String.fromCodePoint(id)로 fallback.
 const idToCharTable: string[] = [];
 
-// 고정 ID 테이블 초���화
+// 고정 ID 테이블 초기화
 for (let i = 0; i < CONSONANTS.length; i++) {
     const id = FIRST_CONSONANT_ID + i;
     idToCharTable[id] = CONSONANTS[i];
@@ -78,9 +83,14 @@ for (let i = 0; i < VOWELS.length; i++) {
     compatJamoToId[VOWELS.charCodeAt(i) - 0x3131] = FIRST_VOWEL_ID + i;
 }
 
-// --- 공개 함수 ---
+// --- 공개 함수 (모두 순수함수) ---
 
-/** 원자 문자 하나를 정수 ID로 변환. 고정 범위(자모, ASCII)는 O(1), 나머지는 Map lookup. */
+/**
+ * UTF-16 code unit 하나(또는 BMP 단일 char)를 atom ID로 변환.
+ * 자모/ASCII는 고정 ID, 그 외는 code unit 값 그대로.
+ *
+ * Multi-code-unit 클러스터는 caller가 code unit별로 호출해야 한다 (decomposeToAtoms 참고).
+ */
 export function atomCharToId(ch: string): number {
     const code = ch.charCodeAt(0);
 
@@ -88,7 +98,7 @@ export function atomCharToId(ch: string): number {
     if (code >= 0x3131 && code <= 0x3163) {
         const id = compatJamoToId[code - 0x3131];
         if (id !== 0) return id;
-        // 복합 자모 (ㄳ 등) — 분해 후에는 나오지 않지만 안전장치
+        // 복합 자모 (ㄳ 등) — 분해 후엔 안 나오지만 fall through 허용 (ID = code)
     }
 
     // ASCII printable
@@ -96,89 +106,19 @@ export function atomCharToId(ch: string): number {
         return FIRST_ASCII_ID + (code - ASCII_START);
     }
 
-    // 동적 할당 (CJK, emoji single-codepoint, etc.)
-    let id = dynamicMap.get(ch);
-    if (id !== undefined) return id;
-
-    id = nextDynamicId++;
-    if (id > 65535) {
-        throw new RangeError(`Atom ID overflow (>65535): too many unique non-jamo/non-ASCII atom characters`);
-    }
-    dynamicMap.set(ch, id);
-    idToCharTable[id] = ch;
-    return id;
+    // 그 외: codepoint(=code unit) 그대로 ID
+    return code;
 }
 
-/** ID → 원래 문자. 디버그/toString용. */
+/**
+ * ID → 원래 문자. fixed 영역은 테이블, 그 외는 `String.fromCodePoint(id)`.
+ *
+ * 주의: surrogate pair half(0xD800-0xDFFF)에 해당하는 ID는 lone surrogate 1자
+ * 문자열을 반환한다. multi-atom 클러스터의 atomsStr 재구성은 atom별 결과를
+ * concat하면 자연스럽게 원본 cluster 문자열이 복원된다.
+ */
 export function atomIdToChar(id: number): string {
-    return idToCharTable[id] ?? `<${id}>`;
-}
-
-/**
- * 현재 세션에서 동적 atom ID가 할당되었는지 확인한다.
- *
- * 한글 자모(ID 1-33)와 ASCII(ID 34-128)는 고정 ID이므로
- * 한글+영문 전용 텍스트에서는 항상 `false`를 반환한다.
- * CJK, emoji 등 비한글·비ASCII 문자가 포함된 경우에만 `true`.
- *
- * `true`이면 `Target`을 IDB 등에 직렬화할 때
- * `snapshotDynamicAtoms()`도 함께 저장해야 다음 세션에서 복원 가능하다.
- *
- * @example
- * ```ts
- * const targets = items.map(preprocessTarget);
- * const atomSnapshot = hasDynamicAtoms() ? snapshotDynamicAtoms() : [];
- * await idb.put("cache", { version: 1, targets, atomSnapshot });
- * ```
- */
-export function hasDynamicAtoms(): boolean {
-    return dynamicMap.size > 0;
-}
-
-/**
- * 동적 atom 매핑의 스냅샷을 반환한다. `[문자, ID]` 튜플 배열.
- *
- * IDB에 `Target`과 함께 저장해두면, 다음 세션에서
- * `restoreDynamicAtoms()`로 복원한 뒤 저장된 `Target`의
- * typed array(atomsFlat 등)를 `preprocessTarget` 없이 바로 사용할 수 있다.
- *
- * 동적 할당이 없으면 빈 배열 반환 — `hasDynamicAtoms()`로 미리 확인 가능.
- *
- * @returns `[char, atomId]` 튜플 배열. IDB에 직접 저장 가능한 형태.
- */
-export function snapshotDynamicAtoms(): Array<[string, number]> {
-    return Array.from(dynamicMap.entries());
-}
-
-/**
- * 이전 세션에서 저장한 동적 atom 매핑을 복원한다.
- *
- * IDB에서 `Target`을 로드하기 **전에** 호출해야 한다.
- * 복원 후에는 저장된 `Target.atomsFlat`의 atom ID가
- * 현재 세션의 registry와 일치하므로 `match`/`matchBest`에 바로 전달 가능.
- *
- * 이미 같은 문자에 같은 ID가 할당되어 있으면 무시한다 (멱등).
- *
- * @param snapshot - `snapshotDynamicAtoms()`가 반환한 `[char, atomId]` 배열
- *
- * @example
- * ```ts
- * const cached = await idb.get("cache");
- * if (cached) {
- *     restoreDynamicAtoms(cached.atomSnapshot);
- *     // cached.targets를 바로 match/matchBest에 사용 가능
- * }
- * ```
- */
-export function restoreDynamicAtoms(snapshot: Array<[string, number]>): void {
-    for (const [ch, id] of snapshot) {
-        if (dynamicMap.has(ch)) continue;
-        dynamicMap.set(ch, id);
-        idToCharTable[id] = ch;
-        if (id >= nextDynamicId) {
-            nextDynamicId = id + 1;
-        }
-    }
+    return idToCharTable[id] ?? String.fromCodePoint(id);
 }
 
 // boundary 판별용 상수 ID

@@ -403,11 +403,11 @@ describe("emoji and multi-codepoint grapheme boundaries", () => {
         expect(target.graphemeIndexes[3]).toBe(2);
     });
 
-    it("ZWJ emoji cluster gets atomLens of 1 (single dynamic atom ID)", () => {
-        const family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    it("ZWJ emoji cluster atomLens equals UTF-16 code unit count", () => {
+        const family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"; // 8 code units
         const target = preprocessTarget(family);
         expect(target.graphemeCount).toBe(1);
-        expect(target.atomLens[0]).toBe(1);
+        expect(target.atomLens[0]).toBe(family.length);
     });
 
     it("matchLiteral with ZWJ emoji correctly deduplicates grapheme indices", () => {
@@ -431,55 +431,60 @@ describe("emoji and multi-codepoint grapheme boundaries", () => {
         expect(ranges[0].end).toBe(1 + family.length); // family.length in UTF-16 units
     });
 
-    it("emoji with skin tone modifier is a single grapheme", () => {
-        const emoji = "\u{1F44B}\u{1F3FB}"; // waving hand + light skin tone
+    it("emoji with skin tone modifier is a single grapheme (multi-atom)", () => {
+        const emoji = "\u{1F44B}\u{1F3FB}"; // waving hand + light skin tone (4 code units)
         const target = preprocessTarget(`a${emoji}b`);
         expect(target.graphemeCount).toBe(3);
-        expect(target.atomLens[1]).toBe(1); // single dynamic atom
+        expect(target.atomLens[1]).toBe(emoji.length);
     });
 });
 
 // ====================================================================
-// 8. Atom ID overflow — 65535 slots, sample-tested
+// 8. Atom ID encoding (codepoint-as-ID + multi-atom clusters)
 // ====================================================================
 
-describe("Atom ID overflow (Uint16Array, max 65535)", () => {
-    // Fixed slots: 19 consonants + 14 vowels + 95 ASCII = 128 (IDs 1-128).
-    // Dynamic slots: 65407 (IDs 129-65535).
-    //
-    // 실사용에선 65535 소진이 사실상 불가능하므로 overflow throw는 구조적
-    // 안전장치로만 유지하고, 여기서는 한도를 훨씬 넘는 대량 CJK 할당이
-    // 정상 동작하는지만 검증한다.
+describe("Atom ID encoding", () => {
+    // 자모(1-33) / ASCII(34-128)는 고정 ID. 그 외 BMP는 codepoint 그대로.
+    // non-BMP / multi-codepoint cluster는 UTF-16 code unit 시퀀스로 분해.
 
-    // 한도(126)를 크게 상회하는 고유 CJK 샘플
-    const cjkChars = Array.from({ length: 2000 }, (_, i) => String.fromCodePoint(0x4e00 + i));
-
-    it("dynamic slots accept thousands of unique CJK characters without overflow", () => {
-        const ids: number[] = [];
-        for (let i = 0; i < cjkChars.length; i++) {
-            const id = atomCharToId(cjkChars[i]);
-            ids.push(id);
-            expect(id).toBeGreaterThanOrEqual(129);
-            expect(id).toBeLessThanOrEqual(65535);
-        }
-
-        // All assigned IDs should be unique
-        expect(new Set(ids).size).toBe(ids.length);
+    it("BMP CJK char → codepoint-as-ID (1 atom)", () => {
+        const ch = "漢"; // U+6F22
+        const atoms = decomposeToAtoms(ch);
+        expect(atoms.length).toBe(1);
+        expect(atoms[0]).toBe(0x6f22);
+        expect(atomCharToId(ch)).toBe(0x6f22);
     });
 
-    it("same rare character does not consume multiple IDs (caching works)", () => {
-        const id1 = atomCharToId(cjkChars[0]);
-        const id2 = atomCharToId(cjkChars[0]);
+    it("non-BMP char → 2 atoms (surrogate pair)", () => {
+        const emoji = "😀"; // U+1F600 → 0xD83D 0xDE00
+        const atoms = decomposeToAtoms(emoji);
+        expect(atoms.length).toBe(2);
+        expect(atoms[0]).toBe(0xd83d);
+        expect(atoms[1]).toBe(0xde00);
+    });
+
+    it("ZWJ cluster → multi-atom (one per UTF-16 unit)", () => {
+        const cluster = "👨\u200d👩\u200d👧"; // 8 code units
+        const atoms = decomposeToAtoms(cluster);
+        expect(atoms.length).toBe(8);
+        expect(atoms[0]).toBe(0xd83d); // 👨 high
+        expect(atoms[1]).toBe(0xdc68); // 👨 low
+        expect(atoms[2]).toBe(0x200d); // ZWJ
+    });
+
+    it("identical chars get identical IDs across calls (deterministic, no registry)", () => {
+        const id1 = atomCharToId("漢");
+        const id2 = atomCharToId("漢");
         expect(id1).toBe(id2);
 
-        const atoms1 = decomposeToAtoms(cjkChars[0]);
-        const atoms2 = decomposeToAtoms(cjkChars[0]);
-        expect(atoms1).toBe(atoms2); // same reference (interned)
-        expect(atoms1[0]).toBe(id1);
+        const atoms1 = decomposeToAtoms("漢");
+        const atoms2 = decomposeToAtoms("漢");
+        expect(atoms1).toBe(atoms2); // interned
     });
 
-    it("preprocessTarget handles targets with many unique CJK chars", () => {
-        const mixedStr = `안녕하세요${cjkChars.slice(0, 200).join("")}감사합니다`;
+    it("preprocessTarget handles many unique CJK without overflow", () => {
+        const cjkChars = Array.from({ length: 2000 }, (_, i) => String.fromCodePoint(0x4e00 + i));
+        const mixedStr = `안녕하세요${cjkChars.join("")}감사합니다`;
         const target = preprocessTarget(mixedStr);
         expect(target.graphemeCount).toBeGreaterThan(0);
 

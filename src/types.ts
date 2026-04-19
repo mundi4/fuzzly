@@ -1,17 +1,16 @@
 /**
- * 한글 음절(또는 비한글 grapheme)을 최소 단위 자모로 분해한 atom ID 시퀀스.
+ * grapheme cluster를 atom ID 시퀀스로 분해한 결과.
  *
- * 각 원소는 내부 atom registry가 할당한 정수 ID (0-65535)이다.
+ * 모든 ID는 결정적(순수함수)으로 산출된다 — 글로벌 가변 상태 없음.
  * - 한글 자모 (ㄱ-ㅎ, ㅏ-ㅣ): 고정 ID 1-33
  * - ASCII printable (0x20-0x7E): 고정 ID 34-128
- * - 기타 (CJK, emoji 등): 동적 ID 129-65535 (등장 순서에 의존)
+ * - 그 외: UTF-16 code unit 값 그대로 (codepoint-as-ID)
+ *   · BMP 단일 codepoint는 1 atom (예: 漢 → ID 0x6F22)
+ *   · non-BMP·multi-codepoint cluster는 code unit별로 N atom
+ *     (예: 😀 → 2 atoms, 👨‍👩‍👧 → 8 atoms)
  *
  * `decomposeToAtoms`로 생성되며 내부 캐시에 의해 interning되므로
  * 동일 입력은 항상 동일 참조를 반환한다 (`===` 비교 가능).
- *
- * **Breaking change**: 이전 버전에서는 `string` 타입이었다.
- * 문자열 메서드(`.charAt()`, `.indexOf()` 등)는 사용할 수 없으며
- * `Uint16Array` 인터페이스(`[i]`, `.length`, `.subarray()` 등)를 사용해야 한다.
  *
  * @see {@link Target} — Target 내부에서 atom ID는 flat 배열(`atomsFlat`)로 저장된다.
  */
@@ -100,18 +99,12 @@ export interface Query {
  *
  * **직렬화 (IndexedDB 등)**: 모든 필드가 `string | number | TypedArray`이므로
  * `structuredClone`으로 직접 저장/복원 가능하다.
- * 단, 동적 atom ID (CJK/emoji 등 비한글·비ASCII 문자)가 포함된 경우
- * 세션 간 ID 안정성을 보장하려면 `snapshotDynamicAtoms()`로 atom 매핑을
- * 함께 저장하고, 복원 시 `restoreDynamicAtoms()`를 Target 사용 전에 호출해야 한다.
- * 한글 + ASCII 텍스트만 포함된 경우 atom ID는 고정이므로 추가 조치 불필요.
+ * atom ID는 순수함수로 산출되므로(자모/ASCII 고정 + 그 외는 codepoint 그대로)
+ * 세션·인스턴스 간 무조건 동일. 별도 매핑 저장 불필요.
  *
  * **제약**: `charIndexes`와 `graphemeIndexes`가 `Uint16Array`이므로
  * 65535 UTF-16 코드유닛을 초과하는 입력은 지원하지 않는다.
  * 초과 시 `preprocessTarget`이 `RangeError`를 던진다.
- *
- * @see {@link snapshotDynamicAtoms} — 동적 atom 매핑 저장
- * @see {@link restoreDynamicAtoms} — 동적 atom 매핑 복원
- * @see {@link hasDynamicAtoms} — 동적 atom 사용 여부 확인
  */
 export interface Target {
     /** 원본 입력 문자열 (대소문자 원본 유지) */

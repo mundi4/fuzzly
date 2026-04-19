@@ -283,9 +283,30 @@ export function decomposeToAtoms(ch: string): Atoms {
         }
     }
 
-    // 3) 그 외 (ASCII, emoji, CJK 등)
+    // 3) 그 외 (ASCII single, BMP CJK/이모지, non-BMP, multi-codepoint cluster)
+    // 각 UTF-16 code unit을 atom으로 emit:
+    //   · ASCII printable: 고정 ID 34-128
+    //   · 그 외 BMP code unit: codepoint 그대로 ID
+    //   · surrogate pair: high/low 각각 atom (2개)
+    //   · ZWJ cluster: code unit별 atom (5-8개 가능)
     else {
-        buildBuf[len++] = atomCharToId(ch);
+        // buildBuf(8 capacity)는 Korean 분해 한도. cluster가 그보다 길면 직접 alloc.
+        if (ch.length <= buildBuf.length) {
+            for (let i = 0; i < ch.length; i++) {
+                buildBuf[len++] = atomCharToId(ch[i]);
+            }
+            const ret = new Uint16Array(len);
+            ret.set(buildBuf.subarray(0, len));
+            atomsCache.set(ch, ret);
+            return ret;
+        }
+
+        const ret = new Uint16Array(ch.length);
+        for (let i = 0; i < ch.length; i++) {
+            ret[i] = atomCharToId(ch[i]);
+        }
+        atomsCache.set(ch, ret);
+        return ret;
     }
 
     const ret = new Uint16Array(len);

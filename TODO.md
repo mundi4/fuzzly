@@ -85,10 +85,11 @@ caller는 원문 char index(UTF-16 offset)와 score/hit 여부만 알면 충분�
     (예: `"strict"` / `"composingOnly"` / `"composingOrLast"`,
     기본값 의미 정합성 유지) — 구체 네이밍은 구현 단계에서 확정
 
-**D. 원자 레지스트리 export**
-- `hasDynamicAtoms` / `snapshotDynamicAtoms` / `restoreDynamicAtoms` —
-  IDB 직렬화 caller에게 필요하지만 `atom`이라는 용어가 노출됨.
-  `serializeRegistry` / `restoreRegistry` 등 중립 네이밍 고려
+**D. 원자 레지스트리 export** — 해소됨
+- `hasDynamicAtoms` / `snapshotDynamicAtoms` / `restoreDynamicAtoms`는
+  글로벌 가변 상태(dynamicMap)를 caller에 노출하던 design smell이었음.
+- atom ID를 codepoint-as-ID + UTF-16 cluster 인코딩으로 전환하면서 글로벌 상태 자체가 사라짐.
+  Target이 self-contained가 되어 IDB 직렬화에 추가 매핑 불필요. 세 함수 모두 제거됨.
 
 **E. MatchResult 메타데이터**
 - `startsAtZero`, `runCount`, `boundaryHits`, `initialConsonantOnly` —

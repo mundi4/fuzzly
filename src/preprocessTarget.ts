@@ -7,11 +7,9 @@ import type { Atoms, Target } from "./types";
  * 검색 대상 문자열을 grapheme 단위로 분해하고 flat typed array 레이아웃으로 저장한다.
  * 결과 Target 객체는 한 번 생성해두고 여러 쿼리에 대해 재사용하는 것이 의도된 패턴.
  *
- * 반환된 `Target`은 모든 필드가 `string | number | TypedArray`이므로
- * `structuredClone` / IndexedDB에 직접 저장할 수 있다.
- * 비한글·비ASCII 문자가 포함된 경우 동적 atom ID가 할당되므로,
- * 직렬화 시 `snapshotDynamicAtoms()`를 함께 저장하고
- * 복원 시 `restoreDynamicAtoms()`를 먼저 호출해야 한다.
+ * 반환된 `Target`은 모든 필드가 `string | number | TypedArray`이고
+ * atom ID가 순수함수로 산출되므로(자모/ASCII 고정 + 그 외는 codepoint 그대로)
+ * `structuredClone` / IndexedDB에 직접 저장하고 어떤 세션에서든 그대로 로드 가능하다.
  *
  * **제약**: 입력이 65535 UTF-16 코드유닛을 초과하면 `RangeError`.
  * 커맨드팔레트 용도에서는 도달할 수 없는 한계.

@@ -18,21 +18,29 @@ npm run check:fix   # biome check --write (format + lint + import sort)
 
 ### Atom ID System (`internal/atomRegistry.ts`)
 
-모든 자모/문자에 정수 ID 할당 (Uint16Array 컨테이너):
-- **고정**: 자음 1-19, 모음 20-33, ASCII 34-128
-- **동적**: CJK/emoji 등 129-65535 (Uint16 한계, 초과 시 RangeError — 실사용에선 사실상 도달 불가)
-- LUT: `isVowelLUT`, `isConsonantLUT`, `isHangulJamoLUT` — Uint8Array(256). 동적 ID(≥129)는 jamo/vowel/consonant가 아니므로 OOB read(undefined)로 자연스럽게 false 반환.
+atom ID는 **순수함수**로 산출 (글로벌 가변 상태 없음). 결정적, 세션·인스턴스·앱 간 portable.
+
+- 자음 (ㄱ-ㅎ): 고정 1-19
+- 모음 (ㅏ-ㅣ basic 14개): 고정 20-33
+- ASCII printable (0x20-0x7E): 고정 34-128
+- 그 외: **UTF-16 code unit 값 그대로** (codepoint-as-ID)
+  - BMP 단일 codepoint: 1 atom (예: 漢 → ID 0x6F22)
+  - non-BMP·multi-codepoint cluster: code unit별 N atom (예: 😀 → 2 atoms, 👨‍👩‍👧 → 8 atoms)
+
+LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적 영역(>128) ID는 OOB read → undefined → `=== 1` false. 의도된 동작.
 
 `decomposeToAtoms(ch)` → `Uint16Array` (interned via cache, `===` 참조동등 유효).
+
+**충돌 (실 사용에선 미발생)**: 제어문자 U+0000-U+001F는 ID 0-31로 자모 영역과, U+007F/U+0080은 fixed ASCII와 충돌. command palette 텍스트엔 등장하지 않으므로 무시.
 
 ### Target Flat Layout
 
 `preprocessTarget(input)` → `Target`. 이전 `TargetGrapheme[]` 대신 flat typed array:
 
 ```
-atomsFlat: Uint16Array     — 전체 atom ID 연결 (동적 ID ≤ 65535 수용)
+atomsFlat: Uint16Array     — 전체 atom ID 연결
 atomStarts: Uint32Array    — grapheme i의 시작 offset
-atomLens: Uint8Array       — grapheme i의 atom 수
+atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼)
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음
 boundaryFlags: Uint8Array  — 0/1
 charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError
@@ -47,8 +55,7 @@ grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 ### IDB 직렬화
 
 Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClone/IDB 직접 저장 가능.
-동적 atom이 있으면 `snapshotDynamicAtoms()` / `restoreDynamicAtoms()` 로 registry 저장/복원 필요.
-한글+ASCII 전용이면 추가 조치 불필요.
+atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 별도 매핑 저장/복원 불필요.
 
 ### match.ts
 
@@ -126,7 +133,6 @@ matchLiteral(literal, target) → MatchResult | null
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 createSearcher(items, opts?) → Searcher (session 최적화 내장)
   searcher.search(queryInput, options?, composingIndex?)
-hasDynamicAtoms() / snapshotDynamicAtoms() / restoreDynamicAtoms()
 ```
 
 주요 타입:
@@ -138,7 +144,7 @@ hasDynamicAtoms() / snapshotDynamicAtoms() / restoreDynamicAtoms()
 
 - Biome enforced. 수동 포맷 금지, `check:fix` 사용
 - `import type { … }` 필수 (Biome `useImportType`)
-- `internal/`은 private — `index.ts`에서 re-export 금지 (atom registry 함수 제외)
+- `internal/`은 private — `index.ts`에서 re-export 금지
 - 모든 public type은 `types.ts`에 정의
 - 테스트: `test/**/*.test.ts`, `globals: true`, `match.test.ts`가 canonical regression suite
 - 커밋: 짧고 소문자, 현재형 영어. hook 없음
