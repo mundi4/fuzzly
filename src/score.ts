@@ -13,9 +13,9 @@ import type { MatchResult, ScoringConfig, Target } from "./types";
  *   tail spill 자체가 차단되어 이 값과 무관하게 동작한다.
  */
 export const SCORING = {
-    POSITION_ZERO: 100,
-    BOUNDARY: 50,
-    CONSECUTIVE: 20,
+    POSITION_ZERO: 30,
+    BOUNDARY: 20,
+    CONSECUTIVE: 50,
     GAP_PENALTY: -3,
     PREFIX_BONUS: 200,
     EXACT_BONUS: 500,
