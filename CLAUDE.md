@@ -18,19 +18,19 @@ npm run check:fix   # biome check --write (format + lint + import sort)
 
 ### Atom ID System (`internal/atomRegistry.ts`)
 
-모든 자모/문자에 정수 ID 할당 (Uint8Array):
+모든 자모/문자에 정수 ID 할당 (Uint16Array 컨테이너):
 - **고정**: 자음 1-19, 모음 20-33, ASCII 34-128
-- **동적**: CJK/emoji 등 129-254 (126개, 초과 시 RangeError)
-- LUT: `isVowelLUT`, `isConsonantLUT`, `isHangulJamoLUT` — Uint8Array indexed
+- **동적**: CJK/emoji 등 129-65535 (Uint16 한계, 초과 시 RangeError — 실사용에선 사실상 도달 불가)
+- LUT: `isVowelLUT`, `isConsonantLUT`, `isHangulJamoLUT` — Uint8Array(256). 동적 ID(≥129)는 jamo/vowel/consonant가 아니므로 OOB read(undefined)로 자연스럽게 false 반환.
 
-`decomposeToAtoms(ch)` → `Uint8Array` (interned via cache, `===` 참조동등 유효).
+`decomposeToAtoms(ch)` → `Uint16Array` (interned via cache, `===` 참조동등 유효).
 
 ### Target Flat Layout
 
 `preprocessTarget(input)` → `Target`. 이전 `TargetGrapheme[]` 대신 flat typed array:
 
 ```
-atomsFlat: Uint8Array      — 전체 atom ID 연결
+atomsFlat: Uint16Array     — 전체 atom ID 연결 (동적 ID ≤ 65535 수용)
 atomStarts: Uint32Array    — grapheme i의 시작 offset
 atomLens: Uint8Array       — grapheme i의 atom 수
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음

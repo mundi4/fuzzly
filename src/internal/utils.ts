@@ -216,7 +216,7 @@ export function normalizeCharToCompat(ch: string): string {
     return ch; // 이미 호환자모거나 일반 문자
 }
 
-// atoms Uint8Array에서 중성/종성 시작 인덱스 계산.
+// atoms Uint16Array에서 중성/종성 시작 인덱스 계산.
 export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex: number } {
     let vowelIndex = -1;
     let tailIndex = -1;
@@ -238,10 +238,11 @@ export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex:
 const atomsCache = new Map<string, Atoms>();
 
 // 임시 빌드 버퍼 (최대 6 atoms: lead + 2 vowel + 2 tail + margin)
-const buildBuf = new Uint8Array(8);
+// Uint16: 동적 atom ID가 최대 65535까지 허용되므로 와이드 컨테이너 필요.
+const buildBuf = new Uint16Array(8);
 
 //
-// Main: 문자 하나 → atom ID sequence (Uint8Array, interned)
+// Main: 문자 하나 → atom ID sequence (Uint16Array, interned)
 //
 export function decomposeToAtoms(ch: string): Atoms {
     const cached = atomsCache.get(ch);
@@ -287,7 +288,7 @@ export function decomposeToAtoms(ch: string): Atoms {
         buildBuf[len++] = atomCharToId(ch);
     }
 
-    const ret = new Uint8Array(len);
+    const ret = new Uint16Array(len);
     ret.set(buildBuf.subarray(0, len));
 
     atomsCache.set(ch, ret);

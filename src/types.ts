@@ -1,21 +1,21 @@
 /**
  * 한글 음절(또는 비한글 grapheme)을 최소 단위 자모로 분해한 atom ID 시퀀스.
  *
- * 각 원소는 내부 atom registry가 할당한 정수 ID (0-254)이다.
+ * 각 원소는 내부 atom registry가 할당한 정수 ID (0-65535)이다.
  * - 한글 자모 (ㄱ-ㅎ, ㅏ-ㅣ): 고정 ID 1-33
  * - ASCII printable (0x20-0x7E): 고정 ID 34-128
- * - 기타 (CJK, emoji 등): 동적 ID 129-254 (등장 순서에 의존)
+ * - 기타 (CJK, emoji 등): 동적 ID 129-65535 (등장 순서에 의존)
  *
  * `decomposeToAtoms`로 생성되며 내부 캐시에 의해 interning되므로
  * 동일 입력은 항상 동일 참조를 반환한다 (`===` 비교 가능).
  *
  * **Breaking change**: 이전 버전에서는 `string` 타입이었다.
  * 문자열 메서드(`.charAt()`, `.indexOf()` 등)는 사용할 수 없으며
- * `Uint8Array` 인터페이스(`[i]`, `.length`, `.subarray()` 등)를 사용해야 한다.
+ * `Uint16Array` 인터페이스(`[i]`, `.length`, `.subarray()` 등)를 사용해야 한다.
  *
  * @see {@link Target} — Target 내부에서 atom ID는 flat 배열(`atomsFlat`)로 저장된다.
  */
-export type Atoms = Uint8Array;
+export type Atoms = Uint16Array;
 
 /**
  * 매치된 타겟 grapheme의 인덱스 배열.
@@ -122,8 +122,8 @@ export interface Target {
     // --- flat grapheme 데이터 ---
     /** grapheme 수 */
     graphemeCount: number;
-    /** 전체 atom ID 연결 배열 */
-    atomsFlat: Uint8Array;
+    /** 전체 atom ID 연결 배열 (동적 atom ID가 최대 65535까지 가능하므로 Uint16) */
+    atomsFlat: Uint16Array;
     /** grapheme i의 atomsFlat 시작 오프셋 */
     atomStarts: Uint32Array;
     /** grapheme i의 atom 수 */

@@ -23,7 +23,7 @@ import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, SpillMode
  *   IME에서 `연`+`ㅎ`→`엲` 후 다음 키 입력으로 `엲`이 finalized된 중간상태를 수용
  *   (예: `막엲ㄱ` vs `막연하게` 매치). Single jongseong은 모든 위치에서 strict.
  *
- * Atoms = Uint8Array (정수 ID). 비교는 모두 정수 비교.
+ * Atoms = Uint16Array (정수 ID). 비교는 모두 정수 비교.
  * Target은 flat typed array 레이아웃 (atomsFlat, atomStarts, atomLens, vowelIdxs, tailIdxs).
  */
 

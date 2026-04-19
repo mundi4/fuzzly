@@ -309,9 +309,9 @@ describe("preprocessTarget - 유닛 테스트", () => {
     });
 
     describe("Readonly 검증", () => {
-        it("grapheme atoms는 Uint8Array", () => {
+        it("grapheme atoms는 Uint16Array", () => {
             const target = preprocessTarget("한");
-            expect(target.atomsFlat).toBeInstanceOf(Uint8Array);
+            expect(target.atomsFlat).toBeInstanceOf(Uint16Array);
             expect(target.atomLens[0]).toBe(3);
         });
     });

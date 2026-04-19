@@ -60,7 +60,7 @@ export function preprocessTarget(input: string): Target {
         totalAtoms += tmpAtomArrays[i].length;
     }
 
-    const atomsFlat = new Uint8Array(totalAtoms);
+    const atomsFlat = new Uint16Array(totalAtoms);
     const atomStarts = new Uint32Array(graphemeCount);
     const atomLens = new Uint8Array(graphemeCount);
     const vowelIdxs = new Int8Array(graphemeCount);

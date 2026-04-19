@@ -147,9 +147,9 @@ describe("buildQuery - 유닛 테스트", () => {
             expect(query.graphemes[0]).toHaveProperty("tailIndex");
         });
 
-        it("atoms는 Uint8Array", () => {
+        it("atoms는 Uint16Array", () => {
             const query = buildQuery("안");
-            expect(query.graphemes[0].atoms).toBeInstanceOf(Uint8Array);
+            expect(query.graphemes[0].atoms).toBeInstanceOf(Uint16Array);
             expect(query.graphemes[0].atoms.length).toBe(3);
         });
     });

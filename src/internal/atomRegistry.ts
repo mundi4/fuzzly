@@ -7,7 +7,11 @@
 // 1-19: 자음 (ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ)
 // 20-33: 기본모음 (ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ) — 분해 후 14종만
 // 34-128: ASCII printable (0x20-0x7E → ID 34+offset)
-// 129-254: 동적 할당 (CJK, 기타)
+// 129-65535: 동적 할당 (CJK, 기타) — Uint16Array 컨테이너
+//
+// LUT들(isVowelLUT 등)은 Uint8Array(256) 크기 그대로 유지한다.
+// 동적 ID(≥129)는 jamo/vowel/consonant가 아니므로 OOB read가
+// undefined로 들어와 `=== 1` 비교가 자연스럽게 false가 된다.
 
 const CONSONANTS = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"; // 19
 const VOWELS = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅛㅜㅠㅡㅣ"; // 14 basic (compound는 분해됨)
@@ -23,8 +27,8 @@ const DYNAMIC_START = FIRST_ASCII_ID + (ASCII_END - ASCII_START + 1); // 34 + 95
 const dynamicMap = new Map<string, number>();
 let nextDynamicId = DYNAMIC_START;
 
-// ID → char (역변환, 디버그/toString용)
-const idToCharTable: string[] = new Array<string>(256);
+// ID → char (역변환, 디버그/toString용). 동적 ID는 sparse로 확장됨.
+const idToCharTable: string[] = [];
 
 // 고정 ID 테이블 초���화
 for (let i = 0; i < CONSONANTS.length; i++) {
@@ -97,8 +101,8 @@ export function atomCharToId(ch: string): number {
     if (id !== undefined) return id;
 
     id = nextDynamicId++;
-    if (id > 254) {
-        throw new RangeError(`Atom ID overflow (>254): too many unique non-jamo/non-ASCII atom characters`);
+    if (id > 65535) {
+        throw new RangeError(`Atom ID overflow (>65535): too many unique non-jamo/non-ASCII atom characters`);
     }
     dynamicMap.set(ch, id);
     idToCharTable[id] = ch;

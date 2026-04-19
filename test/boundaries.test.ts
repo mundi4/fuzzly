@@ -6,22 +6,13 @@ import { decomposeToAtoms } from "../src/internal/utils";
 // ---------------------------------------------------------------------------
 // Typed array boundary tests
 //
-// fuzzly uses Uint8Array for atom IDs (max 254), Uint16Array for char/grapheme
+// fuzzly uses Uint16Array for atom IDs (max 65535), Uint16Array for char/grapheme
 // indexes (max 65535), and Int8Array for vowel/tail indexes. These tests verify
 // correct behavior at and beyond those boundaries.
 //
-// IMPORTANT: The atom registry is module-level singleton state shared across
-// all tests in this file. Tests that allocate dynamic IDs (emoji, CJK) must
-// be ordered carefully:
-//
-//   1. Tests using only Korean jamo/syllables and ASCII (fixed IDs, no dynamic
-//      allocation) can run in any order.
-//   2. Tests using emoji or CJK characters consume dynamic slots (max 126).
-//      These must run BEFORE the overflow tests.
-//   3. The "Atom ID overflow" tests intentionally exhaust all remaining dynamic
-//      slots and MUST run last.
-//
-// Vitest runs describe blocks and tests in declaration order within a file.
+// 동적 atom ID 슬롯은 65407개(129-65535)로 실사용에서 소진 불가. 과거 Uint8Array
+// 한도(126) 시절의 overflow 시나리오는 구조적 안전장치로만 남아있고 테스트는
+// 생략한다. 대량 CJK 할당이 정상 동작하는지만 마지막 블록에서 확인한다.
 // ---------------------------------------------------------------------------
 
 // ====================================================================
@@ -449,80 +440,46 @@ describe("emoji and multi-codepoint grapheme boundaries", () => {
 });
 
 // ====================================================================
-// 8. Atom ID overflow — MUST BE LAST (exhausts all 126 dynamic slots)
+// 8. Atom ID overflow — 65535 slots, sample-tested
 // ====================================================================
 
-describe("Atom ID overflow (Uint8Array, max 254)", () => {
+describe("Atom ID overflow (Uint16Array, max 65535)", () => {
     // Fixed slots: 19 consonants + 14 vowels + 95 ASCII = 128 (IDs 1-128).
-    // Dynamic slots: 126 (IDs 129-254).
+    // Dynamic slots: 65407 (IDs 129-65535).
     //
-    // Some dynamic slots were already consumed by the emoji tests above.
-    // We use CJK Unified Ideographs (U+4E00+) which are guaranteed to not
-    // have been used by any prior test.
+    // 실사용에선 65535 소진이 사실상 불가능하므로 overflow throw는 구조적
+    // 안전장치로만 유지하고, 여기서는 한도를 훨씬 넘는 대량 CJK 할당이
+    // 정상 동작하는지만 검증한다.
 
-    // Generate more than enough unique CJK characters
-    const cjkChars = Array.from({ length: 200 }, (_, i) => String.fromCodePoint(0x4e00 + i));
+    // 한도(126)를 크게 상회하는 고유 CJK 샘플
+    const cjkChars = Array.from({ length: 2000 }, (_, i) => String.fromCodePoint(0x4e00 + i));
 
-    it("dynamic slots accept unique CJK characters until exhausted", () => {
-        // Keep allocating until we hit the limit
+    it("dynamic slots accept thousands of unique CJK characters without overflow", () => {
         const ids: number[] = [];
-        let overflowIndex = -1;
-
         for (let i = 0; i < cjkChars.length; i++) {
-            try {
-                const id = atomCharToId(cjkChars[i]);
-                ids.push(id);
-                // All assigned IDs should be in the valid range
-                expect(id).toBeGreaterThanOrEqual(129);
-                expect(id).toBeLessThanOrEqual(254);
-            } catch (_e) {
-                overflowIndex = i;
-                break;
-            }
+            const id = atomCharToId(cjkChars[i]);
+            ids.push(id);
+            expect(id).toBeGreaterThanOrEqual(129);
+            expect(id).toBeLessThanOrEqual(65535);
         }
 
-        // We should have hit the overflow at some point
-        expect(overflowIndex).toBeGreaterThan(0);
-
-        // All successfully assigned IDs should be unique
+        // All assigned IDs should be unique
         expect(new Set(ids).size).toBe(ids.length);
     });
 
     it("same rare character does not consume multiple IDs (caching works)", () => {
-        // Re-request an already-registered CJK char
         const id1 = atomCharToId(cjkChars[0]);
         const id2 = atomCharToId(cjkChars[0]);
         expect(id1).toBe(id2);
 
-        // Verify through decomposeToAtoms interning
         const atoms1 = decomposeToAtoms(cjkChars[0]);
         const atoms2 = decomposeToAtoms(cjkChars[0]);
         expect(atoms1).toBe(atoms2); // same reference (interned)
         expect(atoms1[0]).toBe(id1);
     });
 
-    it("overflow character throws RangeError from atomCharToId", () => {
-        // Find a character that has NOT been registered yet (beyond what was consumed above)
-        // Use a different Unicode range to guarantee freshness
-        const freshChar = String.fromCodePoint(0x9000);
-        expect(() => atomCharToId(freshChar)).toThrowError(RangeError);
-        expect(() => atomCharToId(freshChar)).toThrowError(/Atom ID overflow/);
-    });
-
-    it("decomposeToAtoms propagates the RangeError for overflow characters", () => {
-        const freshChar = String.fromCodePoint(0x9001);
-        expect(() => decomposeToAtoms(freshChar)).toThrowError(RangeError);
-    });
-
-    it("preprocessTarget throws RangeError when target contains overflow characters", () => {
-        const freshChar = String.fromCodePoint(0x9002);
-        expect(() => preprocessTarget(freshChar)).toThrowError(RangeError);
-    });
-
-    it("Korean + already-registered CJK chars still work after overflow", () => {
-        // Even though we've exhausted dynamic IDs, characters that are already
-        // registered (Korean jamo, ASCII, previously-seen CJK) should still work.
-        const mixedStr = `안녕하세요${cjkChars.slice(0, 5).join("")}감사합니다`;
+    it("preprocessTarget handles targets with many unique CJK chars", () => {
+        const mixedStr = `안녕하세요${cjkChars.slice(0, 200).join("")}감사합니다`;
         const target = preprocessTarget(mixedStr);
         expect(target.graphemeCount).toBeGreaterThan(0);
 
