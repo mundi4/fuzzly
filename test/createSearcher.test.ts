@@ -214,7 +214,7 @@ describe("createSearcher", () => {
         });
 
         it("add - 여러 항목 추가", () => {
-            const searcher = createSearcher<string>([], {});
+            const searcher = createSearcher<string>([], { key: (x) => x });
             searcher.add("안녕", "반갑", "안부");
             expect(searcher.search("안")).toHaveLength(2);
         });
@@ -257,14 +257,14 @@ describe("createSearcher", () => {
         });
 
         it("composingIndex 변경 시 세션이 full rescan으로 떨어져 이전 제외 항목이 복귀", () => {
-            const searcher = createSearcher(["막연하게"]);
-            // 첫 호출: composingIndex=null (strict) → 막엲는 구조적으로 막연과 불일치 → 제외
-            const first = searcher.search("막엲", {}, null);
-            expect(first.map((r) => r.item)).not.toContain("막연하게");
+            const searcher = createSearcher(["은행나무"]);
+            // 첫 호출: composingIndex=null → "으" finalized strict → "은"의 잉여 ㄴ 차단 → 제외
+            const first = searcher.search("으", {}, null);
+            expect(first.map((r) => r.item)).not.toContain("은행나무");
 
-            // 두 번째 호출: composingIndex=2 → ㄱ이 composing, 엲이 extended composing → 매치 성공
-            const second = searcher.search("막엲ㄱ", {}, 2);
-            expect(second.map((r) => r.item)).toContain("막연하게");
+            // 두 번째 호출: composingIndex=0 → "으"가 composing → "은" 잉여 ㄴ 허용 → 매치
+            const second = searcher.search("으", {}, 0);
+            expect(second.map((r) => r.item)).toContain("은행나무");
         });
 
         it("음절별 타이핑 journey: 각 step에서 적절한 composingIndex 넘기면 최종 매치 성공", () => {

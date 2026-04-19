@@ -76,10 +76,11 @@ function isGraphemeComposing(
     allowCompoundRelaxation: boolean,
 ): boolean {
     if (resolved === COMPOSING_ALL || resolved === gi) return true;
-    // compound jongseong(ㄶ/ㄺ 등)이 finalized로 남는 건 "바로 다음 grapheme이 composing"일 때뿐.
-    // IME가 더 이상 결합할 수 없어 자연히 finalized된 중간상태이므로 관대하게 처리.
-    // allowChoseongMatch=false면 이 완화도 함께 비활성화 (ㅎ의 초성 spill을 허용하지 않음).
-    if (allowCompoundRelaxation && qg.hasCompoundTail && resolved === gi + 1) return true;
+    // Compound jongseong(ㄶ/ㄺ 등)은 사용자가 연속 자모를 입력한 걸 IME가 한 grapheme으로 축약한 결과다
+    // (예: "연"+"ㅎ"→"엲"). 원래 사용자 의도는 ㄴ+ㅎ 각각이 초성매치 원료였으므로 anchor+tail spill로
+    // 복원 매치한다. composingIndex/spillMode/composing 인접 여부와 무관하게 항상 완화.
+    // allowChoseongMatch=false면 초성매치 의도 자체를 거부하므로 이 복원도 함께 비활성화.
+    if (allowCompoundRelaxation && qg.hasCompoundTail) return true;
     return false;
 }
 

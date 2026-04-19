@@ -82,7 +82,7 @@ Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClo
 
 초성-only grapheme과 non-Hangul(ASCII, 이모지)은 spillMode 영향을 받지 않는다.
 
-**Compound jongseong 예외**: composing 바로 앞(`resolvedComposing === gi + 1`) 위치의 finalized grapheme이 compound jongseong(ㄶ/ㄺ/ㄻ/ㄼ/ㄽ/ㄾ/ㄿ/ㅀ/ㄳ/ㄵ/ㅄ)을 포함하면 "확장 composing"으로 승격되어 tail spill + anchor-extras-prefix 룰이 적용된다. IME에서 compound jongseong이 finalized로 남는 건 이 위치에서만 자연 발생 (예: `연`+`ㅎ`→`엲` 뒤에 `ㄱ` 입력 → `막엲ㄱ` vs `막연하게` 매치). Single jongseong은 모든 위치에서 strict.
+**Compound jongseong 예외 (IME 축약 복원)**: Compound jongseong(ㄶ/ㄺ/ㄻ/ㄼ/ㄽ/ㄾ/ㄿ/ㅀ/ㄳ/ㄵ/ㅄ)을 포함한 finalized grapheme은 `composingIndex`/`spillMode`/composing 인접 여부와 **무관하게** 항상 tail spill + anchor-extras-prefix 완화가 적용된다 (단, `allowChoseongMatch === true`일 때). 근거: 사용자가 "연하게"를 찾으려고 `연`+`ㅎ`+`ㄱ`(완전매치+초성매치+초성매치)을 입력하면 IME가 `ㄴ+ㅎ`을 `ㄶ`으로 결합시켜 `엲ㄱ`으로 축약하는데, 이 축약을 되돌려 원래 의도(ㅎ은 "하"의 초성, ㄱ은 "게"의 초성)로 복원 매치하는 동작이다. 따라서 `"막엲ㄱ"` vs `"막연하게"`는 `composingIndex=null`이든 `composingIndex=2`이든 매치된다. Single jongseong은 이 복원 대상이 아니므로 모든 위치에서 strict.
 
 **세션 최적화**: `createSearcher`는 직전 호출 대비 `spillMode`/`composingIndex`/`whitespace`/`allowChoseongMatch`가 바뀌면 세션을 자동 리셋한다.
 
@@ -93,12 +93,12 @@ Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClo
 | 값 | 동작 |
 |---|---|
 | `true` (**기본값**) | 기존 동작 — 초성 자모 나열(`ㅁㅇㅎㄱ`)로 target 초성 매치 허용 |
-| `false` | "journey 매칭만" — finalized 초성-only 쿼리 grapheme 차단 + compound jongseong 완화 비활성화 |
+| `false` | 초성매치 의도 거부 — finalized 초성-only 쿼리 grapheme 차단 + compound jongseong 축약 복원도 비활성화 |
 
-`false`일 때의 의도: caller가 IME 타이핑 journey의 유효 중간상태만 매치시키고 초성 나열식 검색은 거부하려는 용도.
+`false`일 때의 의도: caller가 초성 나열식 검색("ㅁㅇㅎㄱ") 및 IME가 자모를 compound로 축약한 복원 매치를 거부하고, composing grapheme 자체의 journey 관대 처리만 허용하려는 용도.
 
-- ✗ `ㅁㅇㅎㄱ` vs `막연하게` — 전부 finalized 초성-only
-- ✗ `막엲ㄱ` vs `막연하게` — compound 완화 off → `엲` strict → 불일치
+- ✗ `ㅁㅇㅎㄱ` vs `막연하게` — 전부 finalized 초성-only (초성매치 거부)
+- ✗ `막엲ㄱ` vs `막연하게` — compound 축약 복원은 본질이 초성매치이므로 함께 거부 (`엲` strict → 불일치)
 - ✓ `ㅁ`+`composingIndex=0` vs `막연하게` — composing grapheme은 예외
 - ✓ `막엲` vs `막연하게` — `엲`이 composing (journey 중)
 - ✓ `막연학` vs `막연하게` — composing `학`의 자연 tail spill은 journey의 일부

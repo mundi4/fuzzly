@@ -461,19 +461,20 @@ describe("spillMode + composingIndex", () => {
             expect(matchBest(q, t, undefined, 2, "composing")).not.toBeNull();
         });
 
-        it("'막엲ㄱ' + composingIndex=null → '막연하게' 매치 X (명시적 none → strict)", () => {
+        it("'막엲ㄱ' + composingIndex=null → '막연하게' 매치 (IME 축약 복원, composingIndex 무관)", () => {
             const q = buildQuery("막엲ㄱ");
             const t = preprocessTarget("막연하게");
-            // null은 "조합중 없음" 명시 → 완화 금지 → "엲" strict → fail
-            expect(match(q, t, null)).toBeNull();
-            expect(matchBest(q, t, undefined, null)).toBeNull();
+            // compound jongseong은 사용자의 초성매치 의도가 IME에 의해 축약된 결과이므로
+            // composingIndex/spillMode와 무관하게 anchor+spill 복원 매치 (allowChoseongMatch=default true)
+            expect(match(q, t, null)).not.toBeNull();
+            expect(matchBest(q, t, undefined, null)).not.toBeNull();
         });
 
-        it("'엲' 단독 + composingIndex=null → '연하' 매치 X (strict)", () => {
+        it("'엲' 단독 + composingIndex=null → '연하' 매치 (compound 완화 항상 ON)", () => {
             const q = buildQuery("엲");
             const t = preprocessTarget("연하");
-            expect(match(q, t, null)).toBeNull();
-            expect(matchBest(q, t, undefined, null)).toBeNull();
+            expect(match(q, t, null)).not.toBeNull();
+            expect(matchBest(q, t, undefined, null)).not.toBeNull();
         });
 
         it("'갉각' → '각각' 매치 X (compound 완화되지만 anchor-extras-prefix ㄱ≠ㄹ 차단)", () => {
@@ -490,9 +491,9 @@ describe("spillMode + composingIndex", () => {
             expect(matchBest(q, t)).toBeNull();
         });
 
-        it("compound jongseong이 composing 직전 아니면 strict ('엲' 비-인접 위치)", () => {
-            // Q=[엲, 고, ㄱ], resolved=2(ㄱ). 첫 '엲'은 gi=0, 0+1=1 !== 2 → strict.
-            // target에 '엲'이 직접 있어야 strict 매치됨. '연'에는 매치 안 됨.
+        it("'엲고ㄱ' vs '연고기' 매치 X (compound 완화되지만 spill ㅎ이 다음 '고' 초성 ㄱ과 불일치)", () => {
+            // compound 완화는 발동: "엲" anchor='연'(ㅇㅕㄴ) + tail ㅎ spill.
+            // 하지만 ㅎ이 spill 대상인 다음 target grapheme "고"의 초성 ㄱ과 불일치 → 실패.
             const q = buildQuery("엲고ㄱ");
             const t = preprocessTarget("연고기");
             expect(match(q, t)).toBeNull();
