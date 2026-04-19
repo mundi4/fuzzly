@@ -19,6 +19,7 @@ export const rafScheduler: Scheduler = (fn) => {
 
 export interface ImeController {
     dispatch(event: ImeEvent): void;
+    reset(): void;
     dispose(): void;
 }
 
@@ -46,6 +47,14 @@ export function createImeController(
         dispatch(event: ImeEvent) {
             internal = applyImeEvent(internal, event);
             schedulePublish();
+        },
+        reset() {
+            if (cancelPending) {
+                cancelPending();
+                cancelPending = null;
+            }
+            internal = createImeInternalState();
+            lastEmitted = projectEmitState(internal);
         },
         dispose() {
             if (cancelPending) {
