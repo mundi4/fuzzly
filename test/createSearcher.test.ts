@@ -248,4 +248,31 @@ describe("createSearcher", () => {
             expect(searcher.search("안")).toHaveLength(0);
         });
     });
+
+    describe("composingIndex 회귀 (useFuzzlyInput 훅 맥락)", () => {
+        it("막엲ㄱ with composingIndex=2 matches 막연하게 (compound jongseong 완화)", () => {
+            const searcher = createSearcher(["막연하게", "foo", "bar"]);
+            const results = searcher.search("막엲ㄱ", {}, 2);
+            expect(results.map((r) => r.item)).toContain("막연하게");
+        });
+
+        it("composingIndex 변경 시 세션이 full rescan으로 떨어져 이전 제외 항목이 복귀", () => {
+            const searcher = createSearcher(["막연하게"]);
+            // 첫 호출: composingIndex=null (strict) → 막엲는 구조적으로 막연과 불일치 → 제외
+            const first = searcher.search("막엲", {}, null);
+            expect(first.map((r) => r.item)).not.toContain("막연하게");
+
+            // 두 번째 호출: composingIndex=2 → ㄱ이 composing, 엲이 extended composing → 매치 성공
+            const second = searcher.search("막엲ㄱ", {}, 2);
+            expect(second.map((r) => r.item)).toContain("막연하게");
+        });
+
+        it("음절별 타이핑 journey: 각 step에서 적절한 composingIndex 넘기면 최종 매치 성공", () => {
+            const searcher = createSearcher(["막연하게"]);
+            searcher.search("막", {}, 0);
+            searcher.search("막엲", {}, 1);
+            const final = searcher.search("막엲ㄱ", {}, 2);
+            expect(final.map((r) => r.item)).toContain("막연하게");
+        });
+    });
 });

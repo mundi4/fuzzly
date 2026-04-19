@@ -186,7 +186,10 @@ computed composingRange:
         <pre id="sel"></pre>
         <h3>computed composingRange</h3>
         <pre id="range"></pre>
-        <h3>event log</h3>
+        <h3 style="display:flex;align-items:center;gap:8px">event log
+            <button id="copyLog" type="button" style="font-size:11px;padding:3px 8px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer">복사</button>
+            <button id="clearLog" type="button" style="font-size:11px;padding:3px 8px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer">clear</button>
+        </h3>
         <div id="log" class="log"></div>
     </div>
     <script>
@@ -252,6 +255,35 @@ computed composingRange:
             }
             el.chars.innerHTML = chunks.join('') || '<em style="color:#aaa">(empty)</em>';
         }
+
+        function logsToText() {
+            return [...logs].reverse().map(e => {
+                const type = e.type.padEnd(18, ' ');
+                const extras = [];
+                if (e.sel) extras.push(`sel=${e.sel}`);
+                if (e.inputType) extras.push(`inputType=${e.inputType}`);
+                return `${e.t}  ${type} data=${JSON.stringify(e.data ?? '')}${extras.length ? '  ' + extras.join('  ') : ''}`;
+            }).join('\n');
+        }
+
+        document.getElementById('copyLog').addEventListener('click', async (ev) => {
+            const btn = ev.currentTarget;
+            const text = logsToText();
+            try {
+                await navigator.clipboard.writeText(text);
+                const prev = btn.textContent;
+                btn.textContent = '복사됨!';
+                setTimeout(() => { btn.textContent = prev; }, 1500);
+            } catch {
+                btn.textContent = '실패';
+                setTimeout(() => { btn.textContent = '복사'; }, 1500);
+            }
+        });
+
+        document.getElementById('clearLog').addEventListener('click', () => {
+            logs.length = 0;
+            renderLog();
+        });
 
         el.input.addEventListener('compositionstart', e => {
             composing = true;

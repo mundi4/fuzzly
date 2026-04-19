@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>useFuzzlyInput React Test</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, sans-serif;
+            margin: 0;
+            padding: 16px;
+            height: 100vh;
+        }
+        #root {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            height: 100%;
+        }
+        .pane {
+            overflow: auto;
+            background: #f7f7f9;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        input {
+            width: 100%;
+            font-size: 24px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-family: inherit;
+        }
+        input:focus { border-color: #468; outline: none; }
+        h3 {
+            margin: 16px 0 6px 0;
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        h3:first-child { margin-top: 0; }
+        pre {
+            margin: 0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            background: white;
+            padding: 8px 10px;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+        }
+        .state {
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+        .state.composing { background: #ffe0e0; color: #a00; }
+        .state.idle { background: #e0f0e0; color: #060; }
+        .log {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+        .log .entry {
+            padding: 3px 4px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            gap: 8px;
+        }
+        .log .entry:last-child { border: none; }
+        .log .entry.suspicious { background: #fff0d0; }
+        .log .entry.invalid { background: #ffd0d0; }
+        .log .t { color: #999; flex-shrink: 0; }
+        .log .ty { font-weight: bold; flex-shrink: 0; }
+        .log .cs { color: #c60; }
+        .log .cu { color: #a80; }
+        .log .ce { color: #080; }
+        .log .in { color: #068; }
+        .log .em { color: #608; }
+        .log .field { color: #333; }
+        button {
+            font-size: 11px;
+            padding: 3px 8px;
+            border: 1px solid #ccc;
+            background: #fff;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover { background: #f0f0f0; }
+        .warn {
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .warn.ok { background: #e0f0e0; color: #060; }
+        .warn.bad { background: #ffd0d0; color: #900; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="./react-test.tsx"></script>
+</body>
+</html>

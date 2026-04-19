@@ -3,7 +3,7 @@
     "target": "esnext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2024", "ESNext.Intl"],
+    "lib": ["ES2024", "ESNext.Intl", "DOM", "DOM.Iterable"],
     "strict": true,
     "declaration": true,
     "outDir": "./dist",
