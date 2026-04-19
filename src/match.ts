@@ -377,7 +377,21 @@ type Candidate = {
     // vowel+tail 쿼리에서 종성 atom이 anchor grapheme 밖으로 넘어간 경우에만 true.
     // "완전 그래핌 매치"(전 grapheme이 anchor 안에서 소비) 판별용.
     tailSpilled: boolean;
+    // candidate 내부에서 타겟 tgi 연속으로 매치된 prefix 길이 (1 이상).
+    // indices = [10, 11, 12] 이면 3, [10, 12] 이면 1. DP 전이의 runLen과
+    // 이어붙여 consecutive bonus 산출에 사용 (issue #15).
+    internalRunLen: number;
 };
+
+// indices가 startTgi부터 전부 연속이면 indices.length, 아니면 1 반환.
+// 전원 연속일 때만 DP의 runLen 누적과 동등한 의미로 consecutive bonus 산정이 가능하므로
+// 부분 연속(중간 gap)은 안전하게 bonus 비활성(=1)으로 간주한다 (issue #15).
+function computeInternalRunLen(indices: number[]): number {
+    for (let i = 1; i < indices.length; i++) {
+        if (indices[i] !== indices[i - 1] + 1) return 1;
+    }
+    return indices.length;
+}
 
 // composing grapheme용: 모음 있는 쿼리 grapheme의 모든 anchor 위치 수집 (tail spill 허용)
 function findVowelCandidatesComposing(qg: QueryGrapheme, target: Target, minTgi: number): Candidate[] {
@@ -403,7 +417,13 @@ function findVowelCandidatesComposing(qg: QueryGrapheme, target: Target, minTgi:
         if (!ok) continue;
 
         if (qTailStart === -1) {
-            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi], tailSpilled: false });
+            candidates.push({
+                startTgi: tgi,
+                endTgi: tgi,
+                indices: [tgi],
+                tailSpilled: false,
+                internalRunLen: 1,
+            });
             continue;
         }
 
@@ -471,6 +491,7 @@ function matchTailFrom(
         endTgi: lastMatchedTgi,
         indices,
         tailSpilled: lastMatchedTgi !== anchorTgi,
+        internalRunLen: computeInternalRunLen(indices),
     };
 }
 
@@ -483,7 +504,13 @@ function findConsonantCandidates(qAtoms: Atoms, target: Target, minTgi: number):
         if (target.atomsFlat[target.atomStarts[startTgi]] !== qAtoms[0]) continue;
 
         if (qAtoms.length === 1) {
-            candidates.push({ startTgi, endTgi: startTgi, indices: [startTgi], tailSpilled: false });
+            candidates.push({
+                startTgi,
+                endTgi: startTgi,
+                indices: [startTgi],
+                tailSpilled: false,
+                internalRunLen: 1,
+            });
             continue;
         }
 
@@ -508,7 +535,13 @@ function findConsonantCandidates(qAtoms: Atoms, target: Target, minTgi: number):
             }
         }
         if (ok) {
-            candidates.push({ startTgi, endTgi: indices[indices.length - 1], indices, tailSpilled: false });
+            candidates.push({
+                startTgi,
+                endTgi: indices[indices.length - 1],
+                indices,
+                tailSpilled: false,
+                internalRunLen: computeInternalRunLen(indices),
+            });
         }
     }
     return candidates;
@@ -520,7 +553,13 @@ function findExactCandidates(qAtoms: Atoms, target: Target, minTgi: number): Can
     const T = target.graphemeCount;
     for (let tgi = minTgi; tgi < T; tgi++) {
         if (atomsEqual(qAtoms, target, tgi)) {
-            candidates.push({ startTgi: tgi, endTgi: tgi, indices: [tgi], tailSpilled: false });
+            candidates.push({
+                startTgi: tgi,
+                endTgi: tgi,
+                indices: [tgi],
+                tailSpilled: false,
+                internalRunLen: 1,
+            });
         }
     }
     return candidates;
@@ -580,6 +619,14 @@ function insertPareto<T extends { score: number; runLen: number }>(arr: T[], ne:
         }
     }
     arr.push(ne);
+}
+
+// candidate 내부 tgi 연속 실행에 대한 독립 consecutive 보너스 (seed/gap 전이용).
+// DP 전이로 얻는 bonus와 동일 체계 — runLen 2,3,…,n 에 해당하는 삼각합.
+// n=1 이면 0, n=2 이면 cons*2, n=3 이면 cons*5, n=4 이면 cons*9.
+function intraRunBonus(internalRunLen: number, consecutive: number): number {
+    if (internalRunLen <= 1) return 0;
+    return consecutive * ((internalRunLen * (internalRunLen + 1)) / 2 - 1);
 }
 
 function candidatePositionScore(
@@ -657,16 +704,13 @@ export function matchBest(
     const firstFrontier: FrontierEntry[][] = [];
     const firstIsChoseongOnly = isHangulChoseongOnly(qGraphemes[0]);
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
+        const c = allCandidates[0][ci];
+        const posScore = candidatePositionScore(c, target, sc, firstIsChoseongOnly, applyTailSpillPenalty);
+        const m = c.internalRunLen;
         firstFrontier.push([
             {
-                score: candidatePositionScore(
-                    allCandidates[0][ci],
-                    target,
-                    sc,
-                    firstIsChoseongOnly,
-                    applyTailSpillPenalty,
-                ),
-                runLen: 1,
+                score: posScore + intraRunBonus(m, sc.consecutive),
+                runLen: m,
                 parentPci: -1,
                 parentFIdx: -1,
             },
@@ -743,11 +787,13 @@ export function matchBest(
                     gapBestFIdx = gapPreds[gapScanPos].fIdx;
                 }
             }
+            const m = c.internalRunLen;
+            const intraBonus = intraRunBonus(m, sc.consecutive);
             if (gapBestVal > -Infinity) {
                 const gapTotal = gapBestVal + sc.gapPenalty * (s - 1);
                 insertPareto(frontier, {
-                    score: gapTotal + posScore,
-                    runLen: 1,
+                    score: gapTotal + posScore + intraBonus,
+                    runLen: m,
                     parentPci: gapBestPci,
                     parentFIdx: gapBestFIdx,
                 });
@@ -755,11 +801,17 @@ export function matchBest(
 
             const consFrontier = consByTgi[s - 1];
             if (consFrontier) {
+                // prev run을 curr의 내부 연속 run과 이어 붙일 때의 consecutive 보너스.
+                // 기존: m=1이면 bonus = cons * newRunLen (단일 tgi)
+                // 일반화: bonus = cons * ((prev+1) + (prev+2) + ... + (prev+m))
+                //        = cons * (m * prev + m*(m+1)/2)
+                const bridgeCoef = (sc.consecutive * (m * (m + 1))) / 2;
                 for (let i = 0; i < consFrontier.length; i++) {
                     const e = consFrontier[i];
-                    const newRunLen = e.runLen + 1;
+                    const newRunLen = e.runLen + m;
+                    const bridgeBonus = sc.consecutive * m * e.runLen + bridgeCoef;
                     insertPareto(frontier, {
-                        score: e.score + sc.consecutive * newRunLen + posScore,
+                        score: e.score + bridgeBonus + posScore,
                         runLen: newRunLen,
                         parentPci: e.pci,
                         parentFIdx: e.fIdx,
