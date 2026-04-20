@@ -7,13 +7,14 @@ import type { MatchResult, ScoringConfig, Target } from "./types";
  * 스코어는 모든 축의 가산 합으로 계산된다 (배율·후보정·discrete jump 없음).
  *
  * 핵심 invariant: **완전 grapheme 매치가 초성/부분 매치보다 항상 높은 점수**.
- * `ANCHOR_FILL`은 primary anchor에서 소비한 atom 수의 제곱에 곱해지므로
- * 2-atom full = `ANCHOR_FILL×4`, 3-atom full = `ANCHOR_FILL×9`로 완전 매치가 비선형 우대된다.
+ * `ANCHOR_FILL`은 각 target anchor에 떨어진 atom 수의 제곱에 곱해지므로
+ * 한 anchor에 atom이 몰릴수록 비선형 보상을 받는다 (예: 3 atoms 한 anchor=9, spill 2+1=5).
  */
 export const SCORING = {
     /**
-     * primary anchor에서 소비한 atom 수의 제곱에 곱해지는 가중치 (spill 제외).
-     * 분산 매치가 완전 매치를 점수로 이길 수 없도록 다른 축을 지배하는 주축.
+     * 각 target anchor에 떨어진 atom 수의 제곱에 곱해지는 가중치.
+     * 한 anchor에 atom이 많이 몰릴수록 (완전 매치) 비선형으로 보상.
+     * 분산된 spill 매치는 Σ(atoms²)가 작아져 완전 매치를 점수로 이길 수 없다.
      */
     ANCHOR_FILL: 50,
     /** 첫 매치가 target index 0에서 시작할 때 보너스 */

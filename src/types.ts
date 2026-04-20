@@ -153,26 +153,28 @@ export type MatchRange = {
  * 스코어링 가중치.
  *
  * 스코어는 가산형 축들의 합으로 계산된다:
- * - `anchorFill` × (primary anchor에서 소비된 atom 수)² — 완전 그래핌 매치 유도의 주축.
- *   spill 인덱스는 anchorFill에 기여하지 않는다.
+ * - `anchorFill` × Σ (각 target anchor에 떨어진 atom 수)² — 완전 그래핌 매치 유도의 주축.
+ *   제곱이라 한 anchor에 atom이 몰릴수록 비선형 보상.
  * - `positionZero` (첫 grapheme이 target index 0)
  * - `boundary` × (단어 경계 매치 수)
  * - `consecutive` × (indices 내 인접 tgi 쌍 수)
  * - `gapPenalty` × (gap 거리) + `targetLengthPenalty` × T
  * - per-atom `graphemeBonus`: 매치된 각 atom마다 해당 atom이 속한 grapheme의 bonus가 누적된다
  *
- * 초성-only 쿼리, tail spill, IME 축약 복원 등은 별도 규칙 없이
- * **primary atoms 수가 작아져 제곱 스케일에서 더 큰 페널티**를 받아 후순위가 된다.
+ * 초성-only 쿼리, tail spill, IME 축약 복원 등은 atom들이 여러 anchor에 1개씩 분산되어
+ * **Σ(atoms²)가 작아지는 자연스러운 감점**으로 후순위가 된다.
  */
 export type ScoringWeights = {
     /**
-     * primary anchor grapheme에서 쿼리가 소비한 atom 수의 **제곱**에 곱해지는 가중치.
-     * spill된 secondary 인덱스는 기여하지 않는다.
+     * 각 target anchor에 떨어진 atom 수의 **제곱**에 곱해지는 가중치.
+     * candidate 전체에서 `Σ over anchors (atoms_in_anchor)² × anchorFill`로 기여.
      *
-     * 예: 2-atom full 매치 = `anchorFill × 4`, 3-atom full 매치 = `anchorFill × 9`,
-     * 초성-only(1-atom) 매치 = `anchorFill × 1`.
+     * 예:
+     * - 3 atoms이 한 anchor에 전부(완전 매치) = `anchorFill × 9`
+     * - 2+1로 spill(분산) = `anchorFill × (4+1) = 5`
+     * - 1+1+1로 완전 분산(초성-only) = `anchorFill × 3`
      *
-     * 완전 매치가 초성/부분 매치를 비선형으로 우대하도록 다른 축보다 지배적인 값을 기본으로 설정한다.
+     * 한 anchor에 몰릴수록 비선형으로 보상되어 완전 매치가 지배적 우위를 갖는다.
      */
     anchorFill?: number;
     /** 첫 매치가 target index 0에서 시작할 때의 보너스 */
