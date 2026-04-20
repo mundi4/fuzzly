@@ -98,14 +98,14 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 | 축 | 설명 |
 |---|---|
-| **anchorFill** | anchor 내부에서 쿼리가 소비한 atom ratio × 가중치. **다른 축을 지배**하는 주축 |
+| **anchorFill** | primary anchor에서 소비한 atom 수의 **제곱** × 가중치. spill 인덱스는 기여 없음. 완전 매치를 비선형 우대하는 주축 |
 | **positionZero** | 첫 매치가 target index 0에서 시작 시 고정 보너스 |
 | **boundary** | 단어 경계 매치당 고정 보너스 |
 | **consecutive** | 최종 indices의 인접 tgi 쌍 개수 × 가중치 (선형) |
 | **gapPenalty / targetLengthPenalty** | gap 거리 / target 길이 × 페널티 (선형, cap 없음) |
-| **graphemeBonus** | 사용자 정의 per-grapheme 보너스 |
+| **graphemeBonus** | 매치된 atom마다 해당 atom이 속한 grapheme의 bonus 가산 (per-atom). spill 포함 |
 
-핵심 invariant: **완전 그래핌 매치 > 초성/부분 매치**. anchorFill이 다른 축 합을 지배하도록 기본 가중치를 잡는다.
+핵심 invariant: **완전 그래핌 매치 > 초성/부분 매치**. anchorFill이 primary atoms 제곱 스케일로 지배하므로 분산 매치(spill)는 완전 매치를 점수로 이길 수 없다.
 
 ## Public API (`src/index.ts`)
 

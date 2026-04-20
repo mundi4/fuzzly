@@ -345,16 +345,18 @@ function intraRunBonus(internalRunLen: number, consecutive: number): number {
 }
 
 function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring): number {
-    let s = 0;
+    // anchorFill: primary anchor에서 소비한 atom 수의 제곱에만 곱한다.
+    // spill 인덱스는 anchorFill에 기여하지 않으므로, 분산 매치가 완전 매치를 점수로 이길 수 없다.
+    const primary = c.filledAtoms[0];
+    let s = sc.anchorFill * primary * primary;
+
     for (let i = 0; i < c.indices.length; i++) {
         const tgi = c.indices[i];
         if (tgi === 0) s += sc.positionZero;
         if (target.boundaryFlags[tgi]) s += sc.boundary;
-        s += sc.getBonus(tgi);
-        const anchorLen = target.atomLens[tgi];
-        if (anchorLen > 0) {
-            s += sc.anchorFill * (c.filledAtoms[i] / anchorLen);
-        }
+        // graphemeBonus는 해당 grapheme에서 매치된 atom 수만큼 누적 (per-atom).
+        // indices 길이가 아니라 실제 매치 atom 총합에 비례.
+        s += sc.getBonus(tgi) * c.filledAtoms[i];
     }
     return s;
 }

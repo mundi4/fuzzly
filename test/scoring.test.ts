@@ -58,13 +58,14 @@ describe("ScoringConfig - weights override", () => {
 });
 
 describe("ScoringConfig - graphemeBonus (배열)", () => {
-    it("특정 위치에 bonus 부여", () => {
+    it("특정 위치에 bonus 부여 (per-atom)", () => {
         const query = buildQuery("하");
         const target = preprocessTarget("안녕하세요");
         const bonuses = [0, 0, 200, 0, 0];
         const rDefault = matchBest(query, target)!;
         const rBoosted = matchBest(query, target, { graphemeBonus: bonuses })!;
-        expect(rBoosted.score!).toBe(rDefault.score! + 200);
+        // '하' = ㅎㅏ (2 atoms) → tgi=2 bonus 200 × 2 atoms = +400
+        expect(rBoosted.score!).toBe(rDefault.score! + 400);
     });
 
     it("bonus 배열이 짧으면 부족한 인덱스는 0 취급", () => {
@@ -88,14 +89,15 @@ describe("ScoringConfig - graphemeBonus (배열)", () => {
 });
 
 describe("ScoringConfig - graphemeBonus (함수)", () => {
-    it("함수 형태로 per-grapheme bonus", () => {
+    it("함수 형태로 per-grapheme bonus (per-atom)", () => {
         const query = buildQuery("하");
         const target = preprocessTarget("안녕하세요");
         const rDefault = matchBest(query, target)!;
         const rBoosted = matchBest(query, target, {
             graphemeBonus: (gi, _t) => (gi === 2 ? 150 : 0),
         })!;
-        expect(rBoosted.score!).toBe(rDefault.score! + 150);
+        // '하' = ㅎㅏ (2 atoms) → tgi=2 bonus 150 × 2 atoms = +300
+        expect(rBoosted.score!).toBe(rDefault.score! + 300);
     });
 
     it("함수가 target을 받아 활용 가능", () => {
@@ -169,6 +171,52 @@ describe("anchorFill invariant - 완전 매치 > 얇은 매치", () => {
         // 막연하게 완전 매치가 가장 높아야 함
         expect(rFull.score!).toBeGreaterThan(rPartial.score!);
         expect(rPartial.score!).toBeGreaterThan(rChoseong.score!);
+    });
+
+    // 회귀: lightseek#5 "기업" 쿼리 랭킹 역전.
+    // '기업여신업무지침'의 prefix 완전 일치 (업=ㅇㅓㅂ 전부 한 anchor)가
+    // '기타어음 정보교환제도'의 분산 매치 (업 → 어+ㅂspill to 보)보다 높게 랭크되어야 한다.
+    it("'기업' prefix 완전 매치가 spill 분산 매치보다 높게 랭크", () => {
+        const q = buildQuery("기업");
+        const tSpill = preprocessTarget("기타어음 정보교환제도");
+        const tFull = preprocessTarget("기업여신업무지침");
+        const rSpill = matchBest(q, tSpill)!;
+        const rFull = matchBest(q, tFull)!;
+        expect(rSpill).not.toBeNull();
+        expect(rFull).not.toBeNull();
+        expect(rFull.score!).toBeGreaterThan(rSpill.score!);
+    });
+
+    // 회귀: lightseek의 last-segment graphemeBonus 조합 하에서도 prefix 완전 매치 우위 유지.
+    it("'기업' 랭킹: last-segment bonus 하에서도 prefix 우위 유지", () => {
+        const q = buildQuery("기업");
+        const tSpill = preprocessTarget("기타어음 정보교환제도");
+        const tFull = preprocessTarget("기업여신업무지침");
+        // 두 target의 last segment(공백 뒤 마지막 토큰 전체)에 +50 bonus.
+        // tSpill: 정(5)부터 도(10)까지, tFull: 기(0)부터 침(7)까지 last segment (공백 없음).
+        const spillBonus = [0, 0, 0, 0, 0, 50, 50, 50, 50, 50, 50];
+        const fullBonus = [50, 50, 50, 50, 50, 50, 50, 50];
+        const rSpill = matchBest(q, tSpill, { graphemeBonus: spillBonus })!;
+        const rFull = matchBest(q, tFull, { graphemeBonus: fullBonus })!;
+        expect(rFull.score!).toBeGreaterThan(rSpill.score!);
+    });
+
+    it("graphemeBonus: spill 인덱스도 per-atom으로 가산", () => {
+        // '업' (ㅇㅓㅂ, 3 atoms) 매치: ㅇㅓ in 어(anchor) + ㅂ spill to 보.
+        // 어(tgi=2)에 atomBonus=10 → 2 atoms × 10 = +20
+        // 보(tgi=6)에 atomBonus=10 → 1 atom (spill ㅂ) × 10 = +10
+        // 합계 기여 +30
+        const q = buildQuery("업");
+        const t = preprocessTarget("기타어음 정보교환제도");
+        const bonusOnlyAnchor = [0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0];
+        const bonusAnchorAndSpill = [0, 0, 10, 0, 0, 0, 10, 0, 0, 0, 0];
+        const rBase = matchBest(q, t)!;
+        const rAnchor = matchBest(q, t, { graphemeBonus: bonusOnlyAnchor })!;
+        const rBoth = matchBest(q, t, { graphemeBonus: bonusAnchorAndSpill })!;
+        // anchor(어)에서 ㅇㅓ 2 atoms 매치 → +20
+        expect(rAnchor.score! - rBase.score!).toBe(20);
+        // spill(보)에서 ㅂ 1 atom 매치 추가 → +10 더
+        expect(rBoth.score! - rAnchor.score!).toBe(10);
     });
 });
 
