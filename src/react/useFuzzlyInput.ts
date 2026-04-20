@@ -49,9 +49,20 @@ interface Handlers {
 }
 
 /**
- * Track IME composition on an uncontrolled input/textarea and expose
- * `{ text, composingIndex, isComposing }` for fuzzly matching, plus a callback
- * ref and imperative `reset` / `setValue`.
+ * Track an uncontrolled input/textarea and expose `{ text, composingIndex,
+ * isComposing }`, plus a callback ref and imperative `reset` / `setValue`.
+ *
+ * `text` is the only field fuzzly matching needs — pass it straight to
+ * `searcher.search(text)` or `matchBest(buildQuery(text), ...)`. The matching
+ * pipeline no longer accepts a `composingIndex`; lenient matching covers IME
+ * journey states by default.
+ *
+ * `composingIndex` and `isComposing` are kept as IME awareness signals for
+ * consumers that need them outside the matching pipeline — e.g. rendering a
+ * composition caret highlight, suppressing side effects (analytics, network
+ * calls) while the user is mid-syllable, or driving composition-aware
+ * autocomplete UI. `composingIndex` is the UTF-16 offset of the active
+ * composition span when `isComposing` is true, otherwise `null`.
  *
  * Uncontrolled only: pairing React's `value` prop with IME composition buffers
  * breaks characters / cursor across browsers. Observe `text` and call `setValue`
@@ -60,8 +71,10 @@ interface Handlers {
  * The callback ref owns the element lifecycle, so conditional mount, remount
  * (`key` change), and portal-delayed inputs all attach listeners correctly.
  * Internally `requestAnimationFrame`-batches composition transitions so
- * `compositionend → compositionstart` within a frame never surfaces as a
- * transient `composingIndex=null` flicker.
+ * consumers reading `isComposing` / `composingIndex` see a clean
+ * composing → composing handoff across syllable boundaries instead of a
+ * one-frame `null` flicker between `compositionend` and the next
+ * `compositionstart`.
  *
  * ```tsx
  * const { text, ref, reset } = useFuzzlyInput<HTMLInputElement>({
