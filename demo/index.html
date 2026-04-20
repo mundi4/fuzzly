@@ -38,12 +38,8 @@
                     <div class="debug-panel">
                         <div class="body">
                             <div class="opt-row">
-                                <label for="optSpillMode">spillMode</label>
-                                <select id="optSpillMode">
-                                    <option value="composingOrLast">composingOrLast</option>
-                                    <option value="composing">composing</option>
-                                    <option value="always">always</option>
-                                </select>
+                                <label for="optStrict">strict</label>
+                                <input type="checkbox" id="optStrict" />
                             </div>
                             <div class="opt-row">
                                 <label for="optWhitespace">whitespace</label>
@@ -52,30 +48,14 @@
                                     <option value="ignore">ignore</option>
                                 </select>
                             </div>
-                            <div class="opt-row">
-                                <label for="optChoseong">allowChoseongMatch</label>
-                                <input type="checkbox" id="optChoseong" checked />
-                            </div>
-                            <div class="opt-row">
-                                <label for="optMatchBest">use matchBest</label>
-                                <input type="checkbox" id="optMatchBest" checked />
-                            </div>
-                            <div class="opt-row">
-                                <label for="optForceNoComposing">composingIndex = null</label>
-                                <input type="checkbox" id="optForceNoComposing" />
-                            </div>
 
                             <div class="opt-section">scoring weights <button type="button" class="opt-reset" id="optScoreReset" title="reset to defaults">reset</button></div>
+                            <div class="opt-row"><label for="wAnchorFill">anchorFill</label><input type="number" id="wAnchorFill" step="10" /></div>
                             <div class="opt-row"><label for="wPositionZero">positionZero</label><input type="number" id="wPositionZero" step="10" /></div>
                             <div class="opt-row"><label for="wBoundary">boundary</label><input type="number" id="wBoundary" step="10" /></div>
                             <div class="opt-row"><label for="wConsecutive">consecutive</label><input type="number" id="wConsecutive" step="5" /></div>
                             <div class="opt-row"><label for="wGapPenalty">gapPenalty</label><input type="number" id="wGapPenalty" step="1" /></div>
-                            <div class="opt-row"><label for="wPrefixBonus">prefixBonus</label><input type="number" id="wPrefixBonus" step="50" /></div>
-                            <div class="opt-row"><label for="wExactBonus">exactBonus</label><input type="number" id="wExactBonus" step="100" /></div>
                             <div class="opt-row"><label for="wTargetLengthPenalty">targetLengthPenalty</label><input type="number" id="wTargetLengthPenalty" step="1" /></div>
-                            <div class="opt-row"><label for="wLengthPenaltyCap">lengthPenaltyCap</label><input type="number" id="wLengthPenaltyCap" step="1" min="0" /></div>
-                            <div class="opt-row"><label for="wChoseongWeaken">choseongWeaken</label><input type="number" id="wChoseongWeaken" step="0.1" min="0" max="1" /></div>
-                            <div class="opt-row"><label for="wTailSpillPenalty">tailSpillPenalty</label><input type="number" id="wTailSpillPenalty" step="5" /></div>
                         </div>
                     </div>
                 </div>
@@ -84,14 +64,13 @@
             <div class="query-wrap">
                 <div class="section-label">
                     QUERY <span class="count" id="queryCount">0</span>
-                    <span class="composing" id="composingBadge">idle</span>
                 </div>
                 <div class="query-row">
                     <span class="prompt">&gt;</span>
                     <input
                         id="queryInput"
                         type="text"
-                        placeholder="한글 IME로 타이핑해봐. composing 중일 땐 composingIndex가 자동 전달돼."
+                        placeholder="한글 IME로 타이핑해봐."
                         spellcheck="false"
                         autocomplete="off"
                         autofocus

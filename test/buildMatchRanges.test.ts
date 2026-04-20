@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildMatchRanges, buildQuery, match, preprocessTarget } from "../src/index";
+import { buildMatchRanges, buildQuery, matchBest, preprocessTarget } from "../src/index";
 
 describe("buildMatchRanges - 유닛 테스트", () => {
     describe("기본 기능", () => {
         it("단일 매칭", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             expect(Array.isArray(ranges)).toBe(true);
         });
@@ -14,7 +14,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("여러 매칭", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕 안녕");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             expect(Array.isArray(ranges)).toBe(true);
         });
@@ -22,7 +22,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("범위 순서", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕 안녕 안녕");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             if (ranges.length > 1) {
                 for (let i = 1; i < ranges.length; i++) {
@@ -62,7 +62,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("start < end", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             for (const range of ranges) {
                 expect(range.start).toBeLessThanOrEqual(range.end);
@@ -72,7 +72,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("start >= 0", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             for (const range of ranges) {
                 expect(range.start).toBeGreaterThanOrEqual(0);
@@ -82,7 +82,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("end <= input.length", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             for (const range of ranges) {
                 expect(range.end).toBeLessThanOrEqual(target.input.length);
@@ -110,7 +110,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("이모지 매칭", () => {
             const query = buildQuery("😊")!;
             const target = preprocessTarget("😊안녕😊");
-            const matchResult = match(query, target);
+            const matchResult = matchBest(query, target);
             if (matchResult) {
                 const ranges = buildMatchRanges([matchResult.indices], target);
                 expect(ranges.length).toBeGreaterThanOrEqual(0);
@@ -120,7 +120,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("이모지 + 스킨톤", () => {
             const query = buildQuery("👋🏻")!;
             const target = preprocessTarget("👋🏻");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             expect(ranges.length).toBeGreaterThanOrEqual(0);
         });
@@ -178,7 +178,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("각 범위는 start, end 필드", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             for (const range of ranges) {
                 expect(range).toHaveProperty("start");
@@ -191,7 +191,7 @@ describe("buildMatchRanges - 유닛 테스트", () => {
         it("범위는 MatchRange 타입", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
             expect(Array.isArray(ranges)).toBe(true);
         });

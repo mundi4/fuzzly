@@ -4,68 +4,47 @@ import type { MatchResult, ScoringConfig, Target } from "./types";
  * `matchBest` DP 스코어링의 기본 가중치 상수.
  * `ScoringConfig.weights`로 개별 오버라이드 가능.
  *
- * 스코어 구성:
- * - 후보 선택 시: POSITION_ZERO, BOUNDARY, graphemeBonus (candidatePositionScore)
- *   - 초성-only 쿼리 grapheme에서 POSITION_ZERO, BOUNDARY는 CHOSEONG_WEAKEN으로 축약 적용
- * - DP 전이 시: CONSECUTIVE (run 길이 기반 삼각수 보너스), GAP_PENALTY
- * - 최종 보정: PREFIX_BONUS, EXACT_BONUS, TARGET_LENGTH_PENALTY × min(L, LENGTH_PENALTY_CAP)
- * - TAIL_SPILL_PENALTY: **`spillMode === "always"` 일 때만** 적용. 다른 spillMode에서는
- *   tail spill 자체가 차단되어 이 값과 무관하게 동작한다.
+ * 스코어는 모든 축의 가산 합으로 계산된다 (배율·후보정·discrete jump 없음).
+ *
+ * 핵심 invariant: **완전 grapheme 매치가 초성/부분 매치보다 항상 높은 점수**.
+ * 이를 위해 `ANCHOR_FILL`은 다른 축의 기여보다 지배적인 값을 가진다.
  */
 export const SCORING = {
+    /** anchor 내부에서 쿼리가 소비한 atom 비율(0~1)당 보너스 */
+    ANCHOR_FILL: 100,
+    /** 첫 매치가 target index 0에서 시작할 때 보너스 */
     POSITION_ZERO: 30,
+    /** 단어 경계 매치당 보너스 */
     BOUNDARY: 20,
-    CONSECUTIVE: 50,
+    /** 최종 indices의 인접 tgi 쌍 한 쌍당 보너스 */
+    CONSECUTIVE: 20,
+    /** gap 거리(tgi)당 페널티 */
     GAP_PENALTY: -3,
-    PREFIX_BONUS: 200,
-    EXACT_BONUS: 500,
+    /** target 길이(grapheme)당 페널티 */
     TARGET_LENGTH_PENALTY: -1,
-    LENGTH_PENALTY_CAP: 16,
-    CHOSEONG_WEAKEN: 0.5,
-    TAIL_SPILL_PENALTY: -30,
 } as const;
 
 export type ResolvedScoring = {
+    anchorFill: number;
     positionZero: number;
     boundary: number;
     consecutive: number;
     gapPenalty: number;
-    prefixBonus: number;
-    exactBonus: number;
     targetLengthPenalty: number;
-    lengthPenaltyCap: number;
-    choseongWeaken: number;
-    tailSpillPenalty: number;
     getBonus: (graphemeIndex: number) => number;
 };
 
 const NO_BONUS = () => 0;
 
-// 0 이상 정수로 clamp. non-finite 이면 기본값.
-function resolveLengthPenaltyCap(v: number | undefined): number {
-    if (v === undefined || !Number.isFinite(v)) return SCORING.LENGTH_PENALTY_CAP;
-    return Math.max(0, Math.floor(v));
-}
-
-// (0, 1] 범위로 clamp. non-finite 또는 0 이하면 기본값, 1 초과는 1 로.
-function resolveChoseongWeaken(v: number | undefined): number {
-    if (v === undefined || !Number.isFinite(v) || v <= 0) return SCORING.CHOSEONG_WEAKEN;
-    return v > 1 ? 1 : v;
-}
-
 // config === undefined일 때 매번 새 객체를 만들지 않도록 캐시.
-// matchBest가 4000회/키스트로크 호출되므로 기본 설정 시 4000 객체 할당 제거.
+// matchBest가 수천 회/키스트로크 호출되므로 기본 설정 시 객체 할당 제거.
 const DEFAULT_RESOLVED: ResolvedScoring = {
+    anchorFill: SCORING.ANCHOR_FILL,
     positionZero: SCORING.POSITION_ZERO,
     boundary: SCORING.BOUNDARY,
     consecutive: SCORING.CONSECUTIVE,
     gapPenalty: SCORING.GAP_PENALTY,
-    prefixBonus: SCORING.PREFIX_BONUS,
-    exactBonus: SCORING.EXACT_BONUS,
     targetLengthPenalty: SCORING.TARGET_LENGTH_PENALTY,
-    lengthPenaltyCap: SCORING.LENGTH_PENALTY_CAP,
-    choseongWeaken: SCORING.CHOSEONG_WEAKEN,
-    tailSpillPenalty: SCORING.TAIL_SPILL_PENALTY,
     getBonus: NO_BONUS,
 };
 
@@ -75,7 +54,6 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
     const w = config.weights;
     const gb = config.graphemeBonus;
 
-    // weights도 graphemeBonus도 없으면 기본값 그대로
     if (w == null && gb == null) return DEFAULT_RESOLVED;
 
     let getBonus: (gi: number) => number;
@@ -87,16 +65,12 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
         getBonus = (gi) => (gi < gb.length ? Number(gb[gi] ?? 0) : 0);
     }
     return {
+        anchorFill: w?.anchorFill ?? SCORING.ANCHOR_FILL,
         positionZero: w?.positionZero ?? SCORING.POSITION_ZERO,
         boundary: w?.boundary ?? SCORING.BOUNDARY,
         consecutive: w?.consecutive ?? SCORING.CONSECUTIVE,
         gapPenalty: w?.gapPenalty ?? SCORING.GAP_PENALTY,
-        prefixBonus: w?.prefixBonus ?? SCORING.PREFIX_BONUS,
-        exactBonus: w?.exactBonus ?? SCORING.EXACT_BONUS,
         targetLengthPenalty: w?.targetLengthPenalty ?? SCORING.TARGET_LENGTH_PENALTY,
-        lengthPenaltyCap: resolveLengthPenaltyCap(w?.lengthPenaltyCap),
-        choseongWeaken: resolveChoseongWeaken(w?.choseongWeaken),
-        tailSpillPenalty: w?.tailSpillPenalty ?? SCORING.TAIL_SPILL_PENALTY,
         getBonus,
     };
 }
@@ -106,7 +80,7 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
  * `ScoringConfig.graphemeBonus`에 사용할 수 있는 배열을 생성한다.
  * 여러 범위가 겹치면 bonus가 누적된다.
  *
- * 반환 배열의 길이는 `target.graphemes.length`와 같고,
+ * 반환 배열의 길이는 `target.graphemeCount`와 같고,
  * 범위에 속하지 않는 grapheme의 값은 0이다.
  *
  * @param target - `preprocessTarget`으로 생성한 타겟
@@ -140,8 +114,7 @@ export function createGraphemeBonuses(
 }
 
 /**
- * `matchBest`를 사용하지 않을 때의 간이 스코어링 함수.
- * `match`의 MatchResult 메타데이터만으로 점수를 계산한다.
+ * `MatchResult` 메타데이터만으로 간이 스코어를 계산한다.
  * `SearchOptions.score`에 전달하거나 직접 호출할 수 있다.
  */
 export function defaultScore(result: MatchResult): number {
@@ -149,6 +122,5 @@ export function defaultScore(result: MatchResult): number {
     if (result.startsAtZero) s += 1000;
     s += result.boundaryHits * 100;
     s -= result.runCount * 5;
-    if (result.initialConsonantOnly) s -= 20;
     return s;
 }

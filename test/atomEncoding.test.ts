@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMatchRanges, buildQuery, match, matchBest, matchLiteral, preprocessTarget } from "../src/index";
+import { buildMatchRanges, buildQuery, matchBest, matchLiteral, preprocessTarget } from "../src/index";
 import { atomCharToId, atomIdToChar } from "../src/internal/atomRegistry";
 import { decomposeToAtoms } from "../src/internal/utils";
 
@@ -113,7 +113,7 @@ describe("end-to-end matching with non-BMP / cluster", () => {
     it("이모지 단일 codepoint 매치", () => {
         const target = preprocessTarget("hello 😀 world");
         const query = buildQuery("😀")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
     });
 
@@ -121,7 +121,7 @@ describe("end-to-end matching with non-BMP / cluster", () => {
         const family = "👨\u200d👩\u200d👧";
         const target = preprocessTarget(`a${family}b`);
         const query = buildQuery(family)!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
         expect(result!.indices.length).toBe(1);
     });
@@ -131,21 +131,21 @@ describe("end-to-end matching with non-BMP / cluster", () => {
         const family = "👨\u200d👩\u200d👧";
         const target = preprocessTarget(family);
         const query = buildQuery("👨")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).toBeNull();
     });
 
     it("CJK + 한글 혼합 target에서 한글 부분만 매치", () => {
         const target = preprocessTarget("漢字안녕字漢");
         const query = buildQuery("안녕")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
     });
 
     it("BMP CJK 부분 검색 — '字'가 '漢字漢'에서 매치", () => {
         const target = preprocessTarget("漢字漢");
         const query = buildQuery("字")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
         expect(result!.indices).toEqual([1]); // 가운데 字
     });
@@ -153,7 +153,7 @@ describe("end-to-end matching with non-BMP / cluster", () => {
     it("이모지 위치별 매치 — start / middle / end", () => {
         const query = buildQuery("😀")!;
         for (const tgt of ["😀foo", "foo😀bar", "foo😀"]) {
-            const result = match(query, preprocessTarget(tgt));
+            const result = matchBest(query, preprocessTarget(tgt));
             expect(result, `target=${tgt}`).not.toBeNull();
         }
     });
@@ -161,14 +161,14 @@ describe("end-to-end matching with non-BMP / cluster", () => {
     it("한글 + CJK + 이모지 모두 섞인 target에서 각 부분 검색 가능", () => {
         const target = preprocessTarget("안녕漢字😀hello");
         for (const q of ["안녕", "漢字", "😀", "hello", "녕漢"]) {
-            const result = match(buildQuery(q)!, target);
+            const result = matchBest(buildQuery(q)!, target);
             expect(result, `query=${q}`).not.toBeNull();
         }
     });
 
     it("이모지 여러 개 — 정확한 위치 식별", () => {
         const target = preprocessTarget("a😀b🎉c");
-        const r1 = match(buildQuery("🎉")!, target);
+        const r1 = matchBest(buildQuery("🎉")!, target);
         expect(r1).not.toBeNull();
         expect(r1!.indices).toEqual([3]); // a, 😀, b, 🎉, c
     });
@@ -191,7 +191,7 @@ describe("end-to-end matching with non-BMP / cluster", () => {
 
     it("buildMatchRanges가 surrogate pair 경계 정확히 처리 (UTF-16 단위)", () => {
         const target = preprocessTarget("a😀b");
-        const result = match(buildQuery("😀")!, target);
+        const result = matchBest(buildQuery("😀")!, target);
         expect(result).not.toBeNull();
         const ranges = buildMatchRanges([result!.indices], target);
         expect(ranges.length).toBe(1);
@@ -202,7 +202,7 @@ describe("end-to-end matching with non-BMP / cluster", () => {
     it("buildMatchRanges가 ZWJ cluster 전체 범위 반환", () => {
         const family = "👨\u200d👩\u200d👧"; // 8 code units
         const target = preprocessTarget(`x${family}y`);
-        const result = match(buildQuery(family)!, target);
+        const result = matchBest(buildQuery(family)!, target);
         expect(result).not.toBeNull();
         const ranges = buildMatchRanges([result!.indices], target);
         expect(ranges[0].start).toBe(1);
@@ -216,8 +216,8 @@ describe("Target self-contained portability", () => {
         const cloned = structuredClone(original);
 
         const query = buildQuery("漢字")!;
-        const r1 = match(query, original);
-        const r2 = match(query, cloned);
+        const r1 = matchBest(query, original);
+        const r2 = matchBest(query, cloned);
 
         expect(r1).not.toBeNull();
         expect(r2).not.toBeNull();

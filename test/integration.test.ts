@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildMatchRanges, buildQuery, match, matchLiteral, preprocessTarget } from "../src/index";
+import { buildMatchRanges, buildQuery, matchBest, matchLiteral, preprocessTarget } from "../src/index";
 
 describe("통합 테스트", () => {
     describe("전체 흐름", () => {
         it("쿼리 생성 → 타겟 생성 → 매칭 → 범위 생성", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const matchResult = match(query, target);
+            const matchResult = matchBest(query, target);
             expect(matchResult).not.toBeNull();
             const ranges = buildMatchRanges([matchResult!.indices], target);
             expect(Array.isArray(ranges)).toBe(true);
@@ -16,13 +16,13 @@ describe("통합 테스트", () => {
             const target = preprocessTarget("안녕하세요 반갑습니다");
 
             const query1 = buildQuery("안")!;
-            const match1 = match(query1, target);
+            const matchResult1 = matchBest(query1, target);
 
             const query2 = buildQuery("반")!;
-            const match2 = match(query2, target);
+            const matchResult2 = matchBest(query2, target);
 
-            expect(match1).not.toBeNull();
-            expect(match2).not.toBeNull();
+            expect(matchResult1).not.toBeNull();
+            expect(matchResult2).not.toBeNull();
         });
     });
 
@@ -30,28 +30,28 @@ describe("통합 테스트", () => {
         it("한글만 검색", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안 😊 녕");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("이모지 검색", () => {
             const query = buildQuery("😊")!;
             const target = preprocessTarget("안녕 😊 하세요");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("공백이 있는 복잡한 텍스트", () => {
             const query = buildQuery("세")!;
             const target = preprocessTarget("안녕하 세요 😊 반갑 습니다");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result === null || result.indices !== undefined).toBe(true);
         });
 
         it("한글 + 영문 + 숫자 + 이모지", () => {
             const query = buildQuery("a1")!;
             const target = preprocessTarget("a1 안녕 😊 ABC123");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
     });
@@ -67,7 +67,7 @@ describe("통합 테스트", () => {
             const target = preprocessTarget("안녕");
 
             const fuzzyQuery = buildQuery("안")!;
-            const fuzzyResult = match(fuzzyQuery, target);
+            const fuzzyResult = matchBest(fuzzyQuery, target);
             const literalResult = matchLiteral("안", target);
 
             expect(fuzzyResult).not.toBeNull();
@@ -79,21 +79,21 @@ describe("통합 테스트", () => {
         it("대문자 쿼리로 소문자 타겟 매칭", () => {
             const query = buildQuery("ABC")!;
             const target = preprocessTarget("abc");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("소문자 쿼리로 대문자 타겟 매칭", () => {
             const query = buildQuery("abc")!;
             const target = preprocessTarget("ABC");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("혼합 케이스", () => {
             const query = buildQuery("AbC")!;
             const target = preprocessTarget("abc");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
     });
@@ -102,7 +102,7 @@ describe("통합 테스트", () => {
         it("매칭 결과를 범위로 변환", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕 안녕 안녕");
-            const matchResult = match(query, target)!;
+            const matchResult = matchBest(query, target)!;
             const ranges = buildMatchRanges([matchResult.indices], target);
 
             expect(Array.isArray(ranges)).toBe(true);
@@ -117,13 +117,13 @@ describe("통합 테스트", () => {
             const target = preprocessTarget("ABC abc 123");
 
             const query1 = buildQuery("a")!;
-            const match1 = match(query1, target);
+            const matchResult1 = matchBest(query1, target);
 
             const query2 = buildQuery("1")!;
-            const match2 = match(query2, target);
+            const matchResult2 = matchBest(query2, target);
 
-            if (match1 && match2) {
-                const ranges = buildMatchRanges([match1.indices, match2.indices], target);
+            if (matchResult1 && matchResult2) {
+                const ranges = buildMatchRanges([matchResult1.indices, matchResult2.indices], target);
                 expect(Array.isArray(ranges)).toBe(true);
             }
         });
@@ -134,7 +134,7 @@ describe("통합 테스트", () => {
             const longText = "안녕하세요 반갑습니다 ".repeat(50);
             const query = buildQuery("반")!;
             const target = preprocessTarget(longText);
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
@@ -142,14 +142,14 @@ describe("통합 테스트", () => {
             const complexText = "한글 English 123 😊 혼합텍스트".repeat(10);
             const query = buildQuery("혼")!;
             const target = preprocessTarget(complexText);
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("많은 매칭 지점", () => {
             const query = buildQuery("a")!;
             const target = preprocessTarget(`${"a".repeat(50)}b${"a".repeat(50)}`);
-            const result = match(query, target);
+            const result = matchBest(query, target);
             if (result) {
                 expect(result.indices.length).toBeGreaterThan(0);
             }
@@ -166,7 +166,7 @@ describe("통합 테스트", () => {
         it("빈 타겟에서 매칭", () => {
             const query = buildQuery("안");
             const target = preprocessTarget("");
-            const result = match(query!, target);
+            const result = matchBest(query!, target);
             expect(result).toBeNull();
         });
 
@@ -180,7 +180,7 @@ describe("통합 테스트", () => {
         it("특수 유니코드 문자", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안\u200B녕\u00A0하");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
     });
@@ -194,7 +194,7 @@ describe("통합 테스트", () => {
             const results = users
                 .map((user) => ({
                     user,
-                    match: match(query, preprocessTarget(user)),
+                    match: matchBest(query, preprocessTarget(user)),
                 }))
                 .filter((r) => r.match !== null);
 
@@ -208,7 +208,7 @@ describe("통합 테스트", () => {
 
             const results = files.filter((file) => {
                 const target = preprocessTarget(file);
-                return match(query, target) !== null;
+                return matchBest(query, target) !== null;
             });
 
             expect(results.length).toBeGreaterThan(0);
@@ -218,7 +218,7 @@ describe("통합 테스트", () => {
             const text = "안녕하세요 반갑습니다";
             const query = buildQuery("반")!;
             const target = preprocessTarget(text);
-            const matchResult = match(query, target);
+            const matchResult = matchBest(query, target);
 
             if (matchResult) {
                 const ranges = buildMatchRanges([matchResult.indices], target);

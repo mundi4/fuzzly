@@ -81,7 +81,6 @@ describe("createSearcher", () => {
             expect(typeof r.result.startsAtZero).toBe("boolean");
             expect(typeof r.result.runCount).toBe("number");
             expect(typeof r.result.boundaryHits).toBe("number");
-            expect(typeof r.result.initialConsonantOnly).toBe("boolean");
         });
 
         it("target 필드에 Target 포함", () => {
@@ -249,30 +248,65 @@ describe("createSearcher", () => {
         });
     });
 
-    describe("composingIndex 회귀 (useFuzzlyInput 훅 맥락)", () => {
-        it("막엲ㄱ with composingIndex=2 matches 막연하게 (compound jongseong 완화)", () => {
-            const searcher = createSearcher(["막연하게", "foo", "bar"]);
-            const results = searcher.search("막엲ㄱ", {}, 2);
-            expect(results.map((r) => r.item)).toContain("막연하게");
+    describe("strict 옵션", () => {
+        it("strict=false 기본: '으' → '은행나무' 매치됨 (관대)", () => {
+            const searcher = createSearcher(["은행나무"]);
+            const r = searcher.search("으");
+            expect(r.map((x) => x.item)).toContain("은행나무");
         });
 
-        it("composingIndex 변경 시 세션이 full rescan으로 떨어져 이전 제외 항목이 복귀", () => {
+        it("strict=true: '으' → '은행나무' 매치 안 됨 (엄격)", () => {
             const searcher = createSearcher(["은행나무"]);
-            // 첫 호출: composingIndex=null → "으" finalized strict → "은"의 잉여 ㄴ 차단 → 제외
-            const first = searcher.search("으", {}, null);
+            const r = searcher.search("으", { strict: true });
+            expect(r.map((x) => x.item)).not.toContain("은행나무");
+        });
+
+        it("strict 변경 시 세션 단절되어 재탐색", () => {
+            const searcher = createSearcher(["은행나무"]);
+            const first = searcher.search("으", { strict: true });
             expect(first.map((r) => r.item)).not.toContain("은행나무");
 
-            // 두 번째 호출: composingIndex=0 → "으"가 composing → "은" 잉여 ㄴ 허용 → 매치
-            const second = searcher.search("으", {}, 0);
+            const second = searcher.search("으", { strict: false });
             expect(second.map((r) => r.item)).toContain("은행나무");
         });
 
-        it("음절별 타이핑 journey: 각 step에서 적절한 composingIndex 넘기면 최종 매치 성공", () => {
-            const searcher = createSearcher(["막연하게"]);
-            searcher.search("막", {}, 0);
-            searcher.search("막엲", {}, 1);
-            const final = searcher.search("막엲ㄱ", {}, 2);
-            expect(final.map((r) => r.item)).toContain("막연하게");
+        it("'막엲ㄱ' → '막연하게' 매치 (기본 관대 모드)", () => {
+            const searcher = createSearcher(["막연하게", "foo", "bar"]);
+            const results = searcher.search("막엲ㄱ");
+            expect(results.map((r) => r.item)).toContain("막연하게");
+        });
+    });
+
+    describe("literal 모드 세션 키", () => {
+        it("literal 모드 연속에서 strict 토글은 세션 단절 안 시킴", () => {
+            // literal 경로는 strict를 무시하므로 토글에도 atoms prefix narrowing이 유지되어야 한다.
+            const searcher = createSearcher(["abcdef", "xyz"]);
+            const r1 = searcher.search("ab", { literal: true, strict: false });
+            expect(r1.map((x) => x.item)).toEqual(["abcdef"]);
+
+            // strict=true로 토글 + atoms prefix 확장. 세션 유지되어 prev 매치만 재스캔.
+            // narrowing: 결과는 단조 감소.
+            const r2 = searcher.search("abc", { literal: true, strict: true });
+            expect(r2.map((x) => x.item)).toEqual(["abcdef"]);
+        });
+
+        it("literal 모드 연속에서 whitespace 토글도 세션 단절 안 시킴", () => {
+            const searcher = createSearcher(["abc", "xyz"]);
+            const r1 = searcher.search("ab", { literal: true, whitespace: "literal" });
+            expect(r1.map((x) => x.item)).toEqual(["abc"]);
+
+            const r2 = searcher.search("abc", { literal: true, whitespace: "ignore" });
+            expect(r2.map((x) => x.item)).toEqual(["abc"]);
+        });
+
+        it("literal ↔ fuzzy 전환은 여전히 세션 단절", () => {
+            const searcher = createSearcher(["ab", "a b"]);
+            const r1 = searcher.search("a b", { literal: true });
+            expect(r1.map((x) => x.item)).toEqual(["a b"]);
+
+            // literal → fuzzy(whitespace=ignore): 둘 다 매치되어야 함 (전체 재스캔 확인)
+            const r2 = searcher.search("a b", { literal: false, whitespace: "ignore" });
+            expect(r2.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
         });
     });
 });
