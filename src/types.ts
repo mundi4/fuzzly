@@ -162,7 +162,8 @@ export type MatchRange = {
  * - per-atom `graphemeBonus`: 매치된 각 atom마다 해당 atom이 속한 grapheme의 bonus가 누적된다
  *
  * 초성-only 쿼리, tail spill, IME 축약 복원 등은 atom들이 여러 anchor에 1개씩 분산되어
- * **Σ(atoms²)가 작아지는 자연스러운 감점**으로 후순위가 된다.
+ * **anchorFill 기준으로는 Σ(atoms²)가 작아지는 자연스러운 감점**을 받는다.
+ * 실제 총점 순서는 다른 보너스/페널티 축 및 가중치 설정의 영향도 함께 받는다.
  */
 export type ScoringWeights = {
     /**
@@ -174,7 +175,7 @@ export type ScoringWeights = {
      * - 2+1로 spill(분산) = `anchorFill × (4+1) = 5`
      * - 1+1+1로 완전 분산(초성-only) = `anchorFill × 3`
      *
-     * 한 anchor에 몰릴수록 비선형으로 보상되어 완전 매치가 지배적 우위를 갖는다.
+    * 한 anchor에 몰릴수록 비선형으로 보상되어 anchorFill 항 기준으로 완전 매치가 유리해진다.
      */
     anchorFill?: number;
     /** 첫 매치가 target index 0에서 시작할 때의 보너스 */
@@ -198,8 +199,9 @@ export type ScoringConfig = {
      * 즉 한 anchor에서 N개 atom이 매치되면 `N × bonus[anchorTgi]`가 가산된다.
      * spill 인덱스도 거기서 소비된 atom 수만큼 해당 grapheme의 bonus를 받는다.
      *
-     * 완전 매치(atoms 많음)가 얇은 매치(atoms 적음)보다 자연스럽게 더 많은 bonus를 얻도록 하기 위함이며,
-     * indices 수가 아닌 atom 수에 비례하므로 분산 매치가 bonus 가산만으로 이득을 보지 않는다.
+     * 완전 매치(atoms 많음)가 얇은 매치(atoms 적음)보다 더 많은 bonus를 받을 수 있게 하기 위함이며,
+     * indices 수가 아닌 atom 수에 비례하므로 같은 bonus 설정에서는 atom을 더 적게 소비한 분산 매치가
+     * graphemeBonus 항만으로 유리해지지는 않는다.
      */
     graphemeBonus?: number[] | ((graphemeIndex: number, target: Target) => number);
 };

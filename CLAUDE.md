@@ -62,6 +62,7 @@ atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 
 2개 함수: `matchBest` (DP + scoring), `matchLiteral` (indexOf).
 
 핵심 규칙:
+
 - **vowel-sticks-to-lead**: 쿼리 모음은 초성이 매치된 타겟 음절 안에서만 소비
 - tail spill은 이후 target grapheme의 **초성 위치**에만 허용
 - anchor extras는 쿼리 tail prefix와 정확히 일치해야 함
@@ -71,10 +72,10 @@ atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 
 
 **`SearchOptions.strict`** (`matchBest` 4번째 인자):
 
-| 값 | 동작 |
-|---|---|
-| `false` (**기본값**) | 모든 한글 grapheme을 관대하게 매칭 — IME journey 수용 |
-| `true` | 모음 포함 쿼리 grapheme은 target anchor와 atom 시퀀스 정확 일치 요구 (tail spill 금지 + anchor 잉여 금지) |
+| 값                   | 동작                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `false` (**기본값**) | 모든 한글 grapheme을 관대하게 매칭 — IME journey 수용                                                     |
+| `true`               | 모음 포함 쿼리 grapheme은 target anchor와 atom 시퀀스 정확 일치 요구 (tail spill 금지 + anchor 잉여 금지) |
 
 초성-only grapheme과 non-Hangul은 `strict` 영향을 받지 않는다.
 
@@ -96,16 +97,16 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 `matchBest` DP 스코어는 모든 축의 단순 가산 합. 배율·후보정·discrete jump 없음.
 
-| 축 | 설명 |
-|---|---|
-| **anchorFill** | Σ (각 target anchor에 떨어진 atom 수)² × 가중치. 한 anchor에 atom이 몰릴수록 비선형 보상. 완전 매치 > 분산 매치의 주축 |
-| **positionZero** | 첫 매치가 target index 0에서 시작 시 고정 보너스 |
-| **boundary** | 단어 경계 매치당 고정 보너스 |
-| **consecutive** | 최종 indices의 인접 tgi 쌍 개수 × 가중치 (선형) |
-| **gapPenalty / targetLengthPenalty** | gap 거리 / target 길이 × 페널티 (선형, cap 없음) |
-| **graphemeBonus** | 매치된 atom마다 해당 atom이 속한 grapheme의 bonus 가산 (per-atom). spill 포함 |
+| 축                                   | 설명                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **anchorFill**                       | Σ (각 target anchor에 떨어진 atom 수)² × 가중치. 한 anchor에 atom이 몰릴수록 비선형 보상. 같은 다른 조건이면 완전 매치 쪽이 유리해지는 주축 |
+| **positionZero**                     | 첫 매치가 target index 0에서 시작 시 고정 보너스                                                                                            |
+| **boundary**                         | 단어 경계 매치당 고정 보너스                                                                                                                |
+| **consecutive**                      | 최종 indices의 인접 tgi 쌍 개수 × 가중치 (선형)                                                                                             |
+| **gapPenalty / targetLengthPenalty** | gap 거리 / target 길이 × 페널티 (선형, cap 없음)                                                                                            |
+| **graphemeBonus**                    | 매치된 atom마다 해당 atom이 속한 grapheme의 bonus 가산 (per-atom). spill 포함                                                               |
 
-핵심 invariant: **완전 그래핌 매치 > 초성/부분 매치**. anchorFill이 Σ(atoms²) 스케일로 지배하므로, 한 anchor에 atom이 몰린 완전 매치가 여러 anchor에 1개씩 흩어진 분산 매치를 항상 이긴다.
+핵심 포인트: anchorFill은 Σ(atoms²) 스케일이라 한 anchor에 atom이 몰린 완전 매치가 이 항 기준으로 유리하다. 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
 
 ## Public API (`src/index.ts`)
 
@@ -120,6 +121,7 @@ createSearcher(items, opts?) → Searcher (session 최적화 내장)
 ```
 
 주요 타입:
+
 - `WhitespaceMode` = `"literal" | "ignore"` (기본 `"literal"`)
 - `SearchOptions.strict?: boolean` (기본 `false`)
 

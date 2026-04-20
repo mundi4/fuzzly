@@ -18,21 +18,29 @@ npm run check:fix   # biome check --write (format + lint + import sort)
 
 ### Atom ID System (`internal/atomRegistry.ts`)
 
-모든 자모/문자에 정수 ID 할당 (Uint8Array):
-- **고정**: 자음 1-19, 모음 20-33, ASCII 34-128
-- **동적**: CJK/emoji 등 129-254 (126개, 초과 시 RangeError)
-- LUT: `isVowelLUT`, `isConsonantLUT`, `isHangulJamoLUT` — Uint8Array indexed
+atom ID는 **순수함수**로 산출 (글로벌 가변 상태 없음). 결정적, 세션·인스턴스·앱 간 portable.
 
-`decomposeToAtoms(ch)` → `Uint8Array` (interned via cache, `===` 참조동등 유효).
+- 자음 (ㄱ-ㅎ): 고정 1-19
+- 모음 (ㅏ-ㅣ basic 14개): 고정 20-33
+- ASCII printable (0x20-0x7E): 고정 34-128
+- 그 외: **UTF-16 code unit 값 그대로** (codepoint-as-ID)
+	- BMP 단일 codepoint: 1 atom (예: 漢 → ID 0x6F22)
+	- non-BMP·multi-codepoint cluster: code unit별 N atom (예: 😀 → 2 atoms, 👨‍👩‍👧 → 8 atoms)
+
+LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적 영역(>128) ID는 OOB read → undefined → `=== 1` false. 의도된 동작.
+
+`decomposeToAtoms(ch)` → `Uint16Array` (interned via cache, `===` 참조동등 유효).
+
+**충돌 (실 사용에선 미발생)**: 제어문자 U+0000-U+001F는 ID 0-31로 자모 영역과, U+007F/U+0080은 fixed ASCII와 충돌. command palette 텍스트엔 등장하지 않으므로 무시.
 
 ### Target Flat Layout
 
-`preprocessTarget(input)` → `Target`. 이전 `TargetGrapheme[]` 대신 flat typed array:
+`preprocessTarget(input)` → `Target`. flat typed array 레이아웃:
 
 ```
-atomsFlat: Uint8Array      — 전체 atom ID 연결
+atomsFlat: Uint16Array     — 전체 atom ID 연결
 atomStarts: Uint32Array    — grapheme i의 시작 offset
-atomLens: Uint8Array       — grapheme i의 atom 수
+atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼)
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음
 boundaryFlags: Uint8Array  — 0/1
 charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError
@@ -40,40 +48,86 @@ charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeE
 
 grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 
+### Query 레이아웃
+
+`buildQuery(input)` → `Query`. 분해된 `graphemes: QueryGrapheme[]`. 65535자 초과 시 `RangeError`.
+
 ### IDB 직렬화
 
 Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClone/IDB 직접 저장 가능.
-동적 atom이 있으면 `snapshotDynamicAtoms()` / `restoreDynamicAtoms()` 로 registry 저장/복원 필요.
-한글+ASCII 전용이면 추가 조치 불필요.
+atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 별도 매핑 저장/복원 불필요.
 
 ### match.ts
 
-3개 함수: `match` (greedy), `matchBest` (DP + scoring), `matchLiteral` (indexOf).
+2개 함수: `matchBest` (DP + scoring), `matchLiteral` (indexOf).
 
 핵심 규칙:
 - **vowel-sticks-to-lead**: 쿼리 모음은 초성이 매치된 타겟 음절 안에서만 소비
-- 종성은 이후 음절로 자유롭게 넘어감 (자음 자리만)
-- 모음은 절대 spill하지 않음
+- tail spill은 이후 target grapheme의 **초성 위치**에만 허용
+- anchor extras는 쿼리 tail prefix와 정확히 일치해야 함
 - `matchBest` DP: candidate 수집 → Pareto frontier → gap/consecutive sweep → backtrack
+
+### strict 모드
+
+**`SearchOptions.strict`** (`matchBest` 4번째 인자):
+
+| 값 | 동작 |
+|---|---|
+| `false` (**기본값**) | 모든 한글 grapheme을 관대하게 매칭 — IME journey 수용 |
+| `true` | 모음 포함 쿼리 grapheme은 target anchor와 atom 시퀀스 정확 일치 요구 (tail spill 금지 + anchor 잉여 금지) |
+
+초성-only grapheme과 non-Hangul은 `strict` 영향을 받지 않는다.
+
+IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `strict=false`의 일반 lenient 매치로 자연 수용된다. 초성-only 쿼리(`ㅁㅇㅎㄱ`)도 동일하게 매치되며, 순위는 scoring(anchorFill)으로 하단에 밀려난다.
+
+**세션 최적화**: `createSearcher`는 직전 호출 대비 `strict`/`whitespace`/`literal`이 바뀌면 세션을 자동 리셋한다.
+
+### whitespace 모드 (공백 처리)
+
+**`WhitespaceMode`** (`SearchOptions.whitespace`, `buildQuery` 2번째 인자 `{ whitespace }`):
+| 값 | 동작 |
+|---|---|
+| `"literal"` (**기본값**) | 공백을 일반 atom으로 취급. `"a b"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일) |
+| `"ignore"` | 쿼리에서 공백 grapheme을 제거 후 매칭. `"a b"` ≡ `"ab"` (VSCode 파일 검색 스타일) |
+
+`ignore` 모드는 `buildQuery`에서 공백 grapheme을 drop하는 전처리만 수행. `matchBest` 알고리즘은 변경 없음. `matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
+
+### Scoring (5축 가산 합)
+
+`matchBest` DP 스코어는 모든 축의 단순 가산 합. 배율·후보정·discrete jump 없음.
+
+| 축 | 설명 |
+|---|---|
+| **anchorFill** | Σ (각 target anchor에 떨어진 atom 수)² × 가중치. 한 anchor에 atom이 몰릴수록 비선형 보상. 같은 다른 조건이면 완전 매치 쪽이 유리해지는 주축 |
+| **positionZero** | 첫 매치가 target index 0에서 시작 시 고정 보너스 |
+| **boundary** | 단어 경계 매치당 고정 보너스 |
+| **consecutive** | 최종 indices의 인접 tgi 쌍 개수 × 가중치 (선형) |
+| **gapPenalty / targetLengthPenalty** | gap 거리 / target 길이 × 페널티 (선형, cap 없음) |
+| **graphemeBonus** | 매치된 atom마다 해당 atom이 속한 grapheme의 bonus 가산 (per-atom). spill 포함 |
+
+핵심 포인트: anchorFill은 Σ(atoms²) 스케일이라 한 anchor에 atom이 몰린 완전 매치가 이 항 기준으로 유리하다. 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
 
 ## Public API (`src/index.ts`)
 
 ```
-buildQuery(input) → Query
+buildQuery(input, opts?: { whitespace? }) → Query
 preprocessTarget(input) → Target
-match(query, target) → MatchResult | null
-matchBest(query, target, scoring?) → MatchResult | null (score 포함)
+matchBest(query, target, scoring?, strict?) → MatchResult | null (score 포함)
 matchLiteral(literal, target) → MatchResult | null
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 createSearcher(items, opts?) → Searcher (session 최적화 내장)
-hasDynamicAtoms() / snapshotDynamicAtoms() / restoreDynamicAtoms()
+	searcher.search(queryInput, options?)
 ```
+
+주요 타입:
+- `WhitespaceMode` = `"literal" | "ignore"` (기본 `"literal"`)
+- `SearchOptions.strict?: boolean` (기본 `false`)
 
 ## Conventions
 
 - Biome enforced. 수동 포맷 금지, `check:fix` 사용
 - `import type { … }` 필수 (Biome `useImportType`)
-- `internal/`은 private — `index.ts`에서 re-export 금지 (atom registry 함수 제외)
+- `internal/`은 private — `index.ts`에서 re-export 금지
 - 모든 public type은 `types.ts`에 정의
 - 테스트: `test/**/*.test.ts`, `globals: true`, `match.test.ts`가 canonical regression suite
 - 커밋: 짧고 소문자, 현재형 영어. hook 없음

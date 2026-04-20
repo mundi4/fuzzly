@@ -112,7 +112,8 @@ type Candidate = {
     indices: number[];
     /**
      * anchor별 소비된 atom 수 (indices와 같은 길이).
-     * anchorFill 스코어 = sum(filledAtoms[i] / target.atomLens[indices[i]]).
+    * candidatePositionScore에서 각 anchor는 `anchorFill × filledAtoms[i]^2`만큼 기여한다.
+    * graphemeBonus도 같은 `filledAtoms[i]`를 per-atom 승수로 사용한다.
      */
     filledAtoms: number[];
     // candidate 내부에서 타겟 tgi 연속으로 매치된 prefix 길이 (1 이상).
@@ -371,7 +372,8 @@ function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScorin
  *   초성-only grapheme과 non-Hangul은 영향 없음.
  *
  * 초성-only 쿼리, tail spill, IME 축약 입력 등은 별도 규칙 없이 scoring으로 품질 차이를 반영한다
- * (anchor에 얇게 들어간 매치는 `anchorFill` 비율이 낮아 자연스럽게 후순위).
+ * (anchor에 atom이 얇게 분산된 매치는 `anchorFill`의 Σ(atoms²) 기여가 작고,
+ * graphemeBonus도 per-atom 기준으로 덜 누적되어 자연스럽게 후순위).
  *
  * @param query - `buildQuery`로 만든 쿼리
  * @param target - `preprocessTarget`으로 만든 타겟

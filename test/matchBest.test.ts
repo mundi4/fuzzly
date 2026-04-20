@@ -111,7 +111,7 @@ describe("matchBest", () => {
             expect(r1.score!).toBeGreaterThan(r2.score!);
         });
 
-        it("초성-only 쿼리는 anchorFill 비율이 낮아 완성 음절보다 낮은 점수", () => {
+        it("초성-only 쿼리는 anchorFill 제곱합 기여가 작아 완성 음절보다 낮은 점수", () => {
             const q1 = buildQuery("ㅇㄴ");
             const q2 = buildQuery("안녕");
             const target = preprocessTarget("안녕하세요");
@@ -168,7 +168,7 @@ describe("matchBest", () => {
         });
 
         it("보너스 간 상대적 크기 관계", () => {
-            // anchorFill이 다른 축을 지배해야 완전 그래핌 매치가 초성-only를 이긴다.
+            // 기본 가중치에서는 anchorFill이 충분히 커서 완전 그래핌 매치가 유리한 경향을 유지해야 한다.
             expect(SCORING.ANCHOR_FILL).toBeGreaterThan(SCORING.POSITION_ZERO);
             expect(SCORING.ANCHOR_FILL).toBeGreaterThan(SCORING.BOUNDARY);
             expect(SCORING.ANCHOR_FILL).toBeGreaterThan(SCORING.CONSECUTIVE);
@@ -179,7 +179,7 @@ describe("matchBest", () => {
         });
     });
 
-    describe("선형 연속 보너스 · 길이 페널티 · anchorFill 비율", () => {
+    describe("선형 연속 보너스 · 길이 페널티 · anchorFill 제곱합", () => {
         it("초성 4-run이 2+2 run보다 우위", () => {
             const q = buildQuery("ㅇㅎㅈㅇ");
             const t1 = preprocessTarget("제1절 외환프라자 정의");
@@ -227,7 +227,7 @@ describe("matchBest", () => {
             expect(r1.score!).toBeGreaterThan(r2.score!);
         });
 
-        it("anchorFill: 초성-only가 완성 음절보다 낮은 점수 (ratio 1/3 vs 3/3)", () => {
+        it("anchorFill: 초성-only가 완성 음절보다 낮은 점수 (1^2 vs 3^2)", () => {
             const qChoseong = buildQuery("ㅈ");
             const qFull = buildQuery("정");
             const target = preprocessTarget("정의");
@@ -243,6 +243,26 @@ describe("matchBest", () => {
             const rC = matchBest(qChoseong, target)!;
             const rF = matchBest(qFull, target)!;
             expect(rC.score!).toBeLessThan(rF.score!);
+        });
+
+        it("초성 연속 5개가 boundary 흩어짐보다 우위 (수신상품편 vs 수신+수+품편)", () => {
+            // "ㅅㅅㅅㅍㅍ" on "수신 > 수신상품편 > 제4절 적립식 예금"
+            // clean: [5,6,7,8,9] = "수신상품편" — anchorFill 250 + boundary 20 + cons 80 = 350
+            // 흩어짐: [0,1,5,8,9] = "수신"+"수"+"품편" — 250 + bd 40 + pos0 30 + cons 40 − gap 15 = 345
+            const q = buildQuery("ㅅㅅㅅㅍㅍ");
+            const t = preprocessTarget("수신 > 수신상품편 > 제4절 적립식 예금");
+            const r = matchBest(q, t)!;
+            expect(r).not.toBeNull();
+            expect(r.indices).toEqual([5, 6, 7, 8, 9]);
+        });
+
+        it("제안 가중치에서도 수신상품편 clean 매치 유지", () => {
+            const q = buildQuery("ㅅㅅㅅㅍㅍ");
+            const t = preprocessTarget("수신 > 수신상품편 > 제4절 적립식 예금");
+            const r = matchBest(q, t, {
+                weights: { anchorFill: 100, positionZero: 20, boundary: 20, consecutive: 20 },
+            })!;
+            expect(r.indices).toEqual([5, 6, 7, 8, 9]);
         });
     });
 

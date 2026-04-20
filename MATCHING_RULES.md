@@ -50,11 +50,11 @@
 
 그래서 모음과 받침은 초성과 다르게 취급한다.
 
-### 1.4 완전 그래핌 매치가 초성/부분 매치보다 항상 상위에 오도록 스코어링한다
+### 1.4 완전 그래핌 매치가 anchorFill 기준으로 유리하도록 스코어링한다
 
 "매치 가능 여부"와 "결과 순위"는 분리해서 본다. 부분 입력/초성 입력은 매치 자체는 허용하되, 점수가 낮아 상위에서 밀려나도록 설계한다.
 
-결과적으로 같은 쿼리로 얻어지는 매치 중 **anchor(target grapheme)를 쿼리가 얼마나 꽉 채웠는가**가 순위의 주요 지표다. 초성 전용 분기, IME 축약 복원 같은 별도 규칙이 아니라 **scoring 축 하나(anchorFill)**로 일관되게 처리한다.
+결과적으로 같은 쿼리로 얻어지는 매치 중 **anchor(target grapheme)에 atom이 얼마나 집중되는가**가 순위의 주요 지표다. 초성 전용 분기, IME 축약 복원 같은 별도 규칙이 아니라 **scoring 축 하나(anchorFill)**로 일관되게 처리한다.
 
 ---
 
@@ -70,7 +70,7 @@
 | **anchor**        | 현재 쿼리 grapheme이 붙는 target grapheme                         |
 | **spill**         | 쿼리 tail이 anchor를 넘어서 다음 target grapheme 초성으로 가는 것 |
 | **anchor extras** | anchor 내부에서 쿼리가 소비하지 못하고 남은 atom                  |
-| **anchorFill**    | anchor 내부에서 쿼리가 소비한 atom 수(또는 비율). 스코어의 주축   |
+| **anchorFill**    | 각 anchor에서 소비한 atom 수의 제곱 합으로 기여하는 스코어 축     |
 
 ---
 
@@ -171,14 +171,15 @@ ASCII, 이모지 등 non-Hangul은 기본적으로 exact atom match다.
 
 ### 4.1 anchorFill (핵심 축)
 
-anchor grapheme 내부에서 쿼리가 소비한 atom 수 / anchor의 전체 atom 수.
+각 target anchor에서 쿼리가 소비한 atom 수의 **제곱 합**으로 계산되는 스코어 축이다.
 
-- 완전 매치 (`막` vs anchor `막`): ratio 1.0
-- 초성 매치 (`ㅁ` vs anchor `막`): ratio 1/3
-- 부분 조합 (`마` vs anchor `막`): ratio 2/3
-- tail spill로 여러 anchor에 걸친 매치: 각 anchor별로 ratio 계산 후 합
+- 완전 매치 (`막` vs anchor `막`): 3 atoms 소비 → `3^2 = 9`
+- 초성 매치 (`ㅁ` vs anchor `막`): 1 atom 소비 → `1^2 = 1`
+- 부분 조합 (`마` vs anchor `막`): 2 atoms 소비 → `2^2 = 4`
+- tail spill로 여러 anchor에 걸친 매치: 각 anchor의 소비 atom 수를 따로 제곱해 합산
+  예: 2+1로 분산되면 `2^2 + 1^2 = 5`
 
-이 값에 `anchorFill` 가중치를 곱해 각 anchor에 기여한다. 다른 축보다 지배적인 값이라 **완전 매치가 초성/부분 매치보다 항상 높은 점수**(§1.4 invariant)가 된다.
+이 합에 `anchorFill` 가중치를 곱해 점수에 기여한다. 따라서 같은 다른 조건이라면 한 anchor에 atom이 몰린 매치가 `anchorFill` 항 기준으로 유리하다. 다만 실제 총점은 positionZero, boundary, consecutive, graphemeBonus, 각종 페널티와의 합으로 결정된다.
 
 ### 4.2 positionZero
 
@@ -205,7 +206,11 @@ tgi 인접은 **anchor grapheme 단위**다. anchor 내부의 atom 연속성은 
 
 ### 4.6 graphemeBonus
 
-사용자 정의 per-grapheme 보너스. 특정 위치(경로 이름, 태그 등)에 가산할 때 사용.
+사용자 정의 bonus 소스다. 값 자체는 grapheme 단위로 제공하지만, 실제 가산은 **per-atom**으로 일어난다.
+
+- 한 grapheme에서 N개 atom이 매치되면 `N × bonus[grapheme]`가 더해진다.
+- spill된 atom도 도착한 grapheme에서 소비된 atom 수만큼 bonus를 받는다.
+- 따라서 동일 bonus 설정에서는 atom을 더 많이 소비한 경로가 graphemeBonus 항에서도 더 유리해질 수 있다.
 
 ---
 
@@ -213,17 +218,17 @@ tgi 인접은 **anchor grapheme 단위**다. anchor 내부의 atom 연속성은 
 
 ### 5.1 `strict`
 
-| 값              | 해석                                                    |
-| --------------- | ------------------------------------------------------- |
-| `false` (기본)  | 모든 한글 grapheme을 관대하게 매칭 (IME journey 수용)   |
-| `true`          | 모음 포함 쿼리 grapheme은 target anchor와 구조 매치 요구 |
+| 값             | 해석                                                     |
+| -------------- | -------------------------------------------------------- |
+| `false` (기본) | 모든 한글 grapheme을 관대하게 매칭 (IME journey 수용)    |
+| `true`         | 모음 포함 쿼리 grapheme은 target anchor와 구조 매치 요구 |
 
 대표 예시: 쿼리 `"으"`, 타겟 `"은"`
 
-| 설정            | 결과       |
-| --------------- | ---------- |
-| `strict=false`  | 매치 됨    |
-| `strict=true`   | 매치 안 됨 |
+| 설정           | 결과       |
+| -------------- | ---------- |
+| `strict=false` | 매치 됨    |
+| `strict=true`  | 매치 안 됨 |
 
 ### 5.2 `whitespace`
 
@@ -254,10 +259,10 @@ literal 모드는 퍼지 규칙을 타지 않는다. substring 매치만 본다.
 
 타겟 `"은"`, 쿼리 `"으"`
 
-| 설정            | 결과       |
-| --------------- | ---------- |
-| 기본 (`strict=false`) | 매치 됨 |
-| `strict=true`   | 매치 안 됨 |
+| 설정                  | 결과       |
+| --------------------- | ---------- |
+| 기본 (`strict=false`) | 매치 됨    |
+| `strict=true`         | 매치 안 됨 |
 
 ### 6.2 tail spill
 
@@ -269,11 +274,11 @@ literal 모드는 퍼지 규칙을 타지 않는다. substring 매치만 본다.
 
 ### 6.3 compound jongseong (IME 중간상태)
 
-| 쿼리       | 타겟         | 결과       |
-| ---------- | ------------ | ---------- |
-| `"막엲ㄱ"` | `"막연하게"` | 매치 됨    |
-| `"앓ㄱ"`   | `"알하고"`   | 매치 됨    |
-| `"막엲고"` | `"막연하고"` | 매치 됨    |
+| 쿼리       | 타겟         | 결과    |
+| ---------- | ------------ | ------- |
+| `"막엲ㄱ"` | `"막연하게"` | 매치 됨 |
+| `"앓ㄱ"`   | `"알하고"`   | 매치 됨 |
+| `"막엲고"` | `"막연하고"` | 매치 됨 |
 
 `strict=true`이면 `엲`이 target anchor와 atom 불일치로 거부된다.
 
@@ -281,14 +286,14 @@ literal 모드는 퍼지 규칙을 타지 않는다. substring 매치만 본다.
 
 타겟 `"막연하게"`에 대해:
 
-| 쿼리         | 매치 여부 | 순위 근거                          |
-| ------------ | --------- | ---------------------------------- |
-| `"막연하게"` | ✅        | anchorFill 4.0 (최고)              |
-| `"막엲ㄱ"`   | ✅        | anchorFill 중간                    |
-| `"막연학"`   | ✅        | anchorFill 중간                    |
-| `"ㅁㅇㅎㄱ"` | ✅        | anchorFill 최저 (각 anchor 1/N)    |
+| 쿼리         | 매치 여부 | 순위 근거                                                   |
+| ------------ | --------- | ----------------------------------------------------------- |
+| `"막연하게"` | ✅        | 각 anchor에 atom이 크게 몰려 anchorFill 기여가 큼           |
+| `"막엲ㄱ"`   | ✅        | 일부 anchor는 채우고 일부는 spill되어 중간 수준             |
+| `"막연학"`   | ✅        | 완전 매치보다 덜 채워져 중간 수준                           |
+| `"ㅁㅇㅎㄱ"` | ✅        | 각 anchor에 1 atom씩만 매치되어 anchorFill 기여가 가장 작음 |
 
-모두 매치되지만 완전 매치가 항상 상위. 초성 쿼리는 하단.
+모두 매치되지만, 기본 가중치에서는 완전 매치 쪽이 대체로 상위에 온다. 초성 쿼리는 보통 하단으로 밀린다.
 
 ### 6.5 삭제(backspace)
 
@@ -303,7 +308,7 @@ whole-char 삭제(`"텍스트"` → `"텍스"` → `"텍"`), composition 유지 
 ### 7.1 anchorFill 가중치 튜닝
 
 - 다른 축(positionZero/boundary/consecutive) 대비 anchorFill의 상대 크기를 어느 정도로 잡을지는 실측 데이터로 조정해야 할 수 있다.
-- §1.4 invariant("완전 매치 > 초성 매치")가 깨지지 않는 선에서 가중치 균형을 조정한다.
+- 기본 가중치에서 기대하는 랭킹 경향("완전 매치가 보통 더 앞선다")이 유지되는 선에서 가중치 균형을 조정한다.
 
 ### 7.2 공백과 ignore 모드 경계
 

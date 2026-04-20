@@ -6,15 +6,16 @@ import type { MatchResult, ScoringConfig, Target } from "./types";
  *
  * 스코어는 모든 축의 가산 합으로 계산된다 (배율·후보정·discrete jump 없음).
  *
- * 핵심 invariant: **완전 grapheme 매치가 초성/부분 매치보다 항상 높은 점수**.
- * `ANCHOR_FILL`은 각 target anchor에 떨어진 atom 수의 제곱에 곱해지므로
+ * 핵심 invariant: `ANCHOR_FILL` 항만 보면 완전 grapheme 매치가 초성/부분 매치보다 유리하다.
+ * 각 target anchor에 떨어진 atom 수의 제곱에 곱해지므로
  * 한 anchor에 atom이 몰릴수록 비선형 보상을 받는다 (예: 3 atoms 한 anchor=9, spill 2+1=5).
+ * 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
  */
 export const SCORING = {
     /**
      * 각 target anchor에 떨어진 atom 수의 제곱에 곱해지는 가중치.
      * 한 anchor에 atom이 많이 몰릴수록 (완전 매치) 비선형으로 보상.
-     * 분산된 spill 매치는 Σ(atoms²)가 작아져 완전 매치를 점수로 이길 수 없다.
+     * 분산된 spill 매치는 anchorFill 기여만 놓고 보면 Σ(atoms²)가 작아져 불리하다.
      */
     ANCHOR_FILL: 50,
     /** 첫 매치가 target index 0에서 시작할 때 보너스 */

@@ -155,7 +155,7 @@ describe("createGraphemeBonuses", () => {
     });
 });
 
-describe("anchorFill invariant - 완전 매치 > 얇은 매치", () => {
+describe("anchorFill regression - 완전 매치가 기본 가중치에서 우위", () => {
     it("'막연하게' 완전 매치가 'ㅁㅇㅎㄱ' 초성 매치보다 높은 점수", () => {
         const target = preprocessTarget("막연하게");
         const rChoseong = matchBest(buildQuery("ㅁㅇㅎㄱ"), target)!;
@@ -187,7 +187,7 @@ describe("anchorFill invariant - 완전 매치 > 얇은 매치", () => {
         expect(rFull.score!).toBeGreaterThan(rSpill.score!);
     });
 
-    // 회귀: lightseek의 last-segment graphemeBonus 조합 하에서도 prefix 완전 매치 우위 유지.
+    // 회귀: 현재 기본 bonus 조합에서도 prefix 완전 매치 우위가 유지되어야 한다.
     it("'기업' 랭킹: last-segment bonus 하에서도 prefix 우위 유지", () => {
         const q = buildQuery("기업");
         const tSpill = preprocessTarget("기타어음 정보교환제도");
