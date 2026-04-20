@@ -276,4 +276,37 @@ describe("createSearcher", () => {
             expect(results.map((r) => r.item)).toContain("막연하게");
         });
     });
+
+    describe("literal 모드 세션 키", () => {
+        it("literal 모드 연속에서 strict 토글은 세션 단절 안 시킴", () => {
+            // literal 경로는 strict를 무시하므로 토글에도 atoms prefix narrowing이 유지되어야 한다.
+            const searcher = createSearcher(["abcdef", "xyz"]);
+            const r1 = searcher.search("ab", { literal: true, strict: false });
+            expect(r1.map((x) => x.item)).toEqual(["abcdef"]);
+
+            // strict=true로 토글 + atoms prefix 확장. 세션 유지되어 prev 매치만 재스캔.
+            // narrowing: 결과는 단조 감소.
+            const r2 = searcher.search("abc", { literal: true, strict: true });
+            expect(r2.map((x) => x.item)).toEqual(["abcdef"]);
+        });
+
+        it("literal 모드 연속에서 whitespace 토글도 세션 단절 안 시킴", () => {
+            const searcher = createSearcher(["abc", "xyz"]);
+            const r1 = searcher.search("ab", { literal: true, whitespace: "literal" });
+            expect(r1.map((x) => x.item)).toEqual(["abc"]);
+
+            const r2 = searcher.search("abc", { literal: true, whitespace: "ignore" });
+            expect(r2.map((x) => x.item)).toEqual(["abc"]);
+        });
+
+        it("literal ↔ fuzzy 전환은 여전히 세션 단절", () => {
+            const searcher = createSearcher(["ab", "a b"]);
+            const r1 = searcher.search("a b", { literal: true });
+            expect(r1.map((x) => x.item)).toEqual(["a b"]);
+
+            // literal → fuzzy(whitespace=ignore): 둘 다 매치되어야 함 (전체 재스캔 확인)
+            const r2 = searcher.search("a b", { literal: false, whitespace: "ignore" });
+            expect(r2.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
+        });
+    });
 });

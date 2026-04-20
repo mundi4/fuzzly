@@ -108,15 +108,17 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
             // 현재 atoms가 이전 atoms의 확장인가?
-            // 매칭 모드(literal/fuzzy)나 strict/whitespace 상태가 달라지면 세션 단절
+            // 매칭 모드(literal/fuzzy)가 달라지면 세션 단절. fuzzy 모드에서는 strict/whitespace
+            // 변경도 단절 사유. literal 경로는 strict/whitespace를 무시하므로 비교에서 제외.
             const currentLiteral = !!searchOpts.literal;
+            const flagsCompatible =
+                prevLiteral === currentLiteral &&
+                (currentLiteral || (prevStrict === strict && prevWhitespace === whitespace));
             const sessionIndices =
                 prevAtoms.length > 0 &&
                 currentAtoms.length > prevAtoms.length &&
                 currentAtoms.startsWith(prevAtoms) &&
-                prevLiteral === currentLiteral &&
-                prevStrict === strict &&
-                prevWhitespace === whitespace &&
+                flagsCompatible &&
                 prevMatchedIndices !== null
                     ? prevMatchedIndices
                     : null;
