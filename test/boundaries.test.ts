@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMatchRanges, buildQuery, match, matchLiteral, preprocessTarget } from "../src/index";
+import { buildMatchRanges, buildQuery, matchBest, matchLiteral, preprocessTarget } from "../src/index";
 import { atomCharToId } from "../src/internal/atomRegistry";
 import { decomposeToAtoms } from "../src/internal/utils";
 
@@ -67,7 +67,7 @@ describe("Int8Array for vowelIdxs/tailIdxs (range -128 to 127)", () => {
         expect(query.graphemes[0].vowelIndex).toBe(-1);
 
         const target = preprocessTarget("가나다");
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
         expect(result!.indices).toContain(0);
     });
@@ -164,7 +164,7 @@ describe("charIndexes Uint16Array (max 65535)", () => {
         expect(target.charIndexes[65534]).toBe(65534);
 
         const query = buildQuery("a")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
     });
 
@@ -186,7 +186,7 @@ describe("charIndexes Uint16Array (max 65535)", () => {
 
         const target = preprocessTarget(str);
         const query = buildQuery("나다")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
 
         const ranges = buildMatchRanges([result!.indices], target);
@@ -260,7 +260,7 @@ describe("end-to-end: match + buildMatchRanges near typed array boundaries", () 
 
         const target = preprocessTarget(str);
         const query = buildQuery("감사")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
 
         const ranges = buildMatchRanges([result!.indices], target);
@@ -275,7 +275,7 @@ describe("end-to-end: match + buildMatchRanges near typed array boundaries", () 
 
         const target = preprocessTarget(str);
         const query = buildQuery("ㄱㅅ")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
 
         const ranges = buildMatchRanges([result!.indices], target);
@@ -489,7 +489,7 @@ describe("Atom ID encoding", () => {
         expect(target.graphemeCount).toBeGreaterThan(0);
 
         const query = buildQuery("안녕")!;
-        const result = match(query, target);
+        const result = matchBest(query, target);
         expect(result).not.toBeNull();
     });
 });

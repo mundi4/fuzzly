@@ -35,7 +35,7 @@ LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적
 
 ### Target Flat Layout
 
-`preprocessTarget(input)` → `Target`. 이전 `TargetGrapheme[]` 대신 flat typed array:
+`preprocessTarget(input)` → `Target`. flat typed array 레이아웃:
 
 ```
 atomsFlat: Uint16Array     — 전체 atom ID 연결
@@ -50,7 +50,7 @@ grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 
 ### Query 레이아웃
 
-`buildQuery(input)` → `Query`. 분해된 `graphemes: QueryGrapheme[]`와 함께 `charIndexes`/`graphemeIndexes`(Uint16Array)를 보유한다. 이 매핑은 caller가 넘긴 `composingIndex`(UTF-16 char index)를 grapheme 인덱스로 변환하는 데 사용된다. 65535자 초과 시 `RangeError`.
+`buildQuery(input)` → `Query`. 분해된 `graphemes: QueryGrapheme[]`. 65535자 초과 시 `RangeError`.
 
 ### IDB 직렬화
 
@@ -59,56 +59,28 @@ atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 
 
 ### match.ts
 
-3개 함수: `match` (greedy), `matchBest` (DP + scoring), `matchLiteral` (indexOf).
+2개 함수: `matchBest` (DP + scoring), `matchLiteral` (indexOf).
 
 핵심 규칙:
 - **vowel-sticks-to-lead**: 쿼리 모음은 초성이 매치된 타겟 음절 안에서만 소비
-- 종성 spill은 **spillMode 정책**에 따름 (아래 섹션) — 조합중 grapheme에서만 허용, finalized grapheme은 anchor 내부로 제한
-- 모음은 절대 spill하지 않음
+- tail spill은 이후 target grapheme의 **초성 위치**에만 허용
+- anchor extras는 쿼리 tail prefix와 정확히 일치해야 함
 - `matchBest` DP: candidate 수집 → Pareto frontier → gap/consecutive sweep → backtrack
 
-### spillMode / composingIndex (IME composing 기반 finalized 엄격성)
+### strict 모드
 
-**원리**: 사용자가 모음까지 친 finalized grapheme은 "이 음절을 완성하려는 의도"로 간주. 해당 grapheme은 타겟 anchor와 **구조 매치**(atom 시퀀스 정확히 일치)를 요구. 조합중(composing) grapheme만 기존 관대 매칭(tail spill + anchor 잉여 atom 허용).
-
-결과적으로 쿼리 `"으"`(finalized) ≠ 타겟 `"은"`, `"일"`(finalized) ≠ `"읽"` 등 false positive가 감소한다.
-
-**`SpillMode`** (`SearchOptions.spillMode`, `match`/`matchBest` 5번째 인자):
-| 값 | 동작 |
-|---|---|
-| `"always"` | 모든 grapheme 조합중 취급 (기존 동작, 전부 spill 허용) |
-| `"composing"` | `composingIndex`가 지정한 grapheme만 관대, 없으면 전부 엄격 |
-| `"composingOrLast"` (**기본값**) | `composingIndex` 지정되면 그것만, `undefined`면 마지막 grapheme 자동 추정, `null`이면 모두 엄격 |
-
-**`composingIndex`** (`Searcher.search` 3번째 인자, `match`/`matchBest` 4번째 인자):
-- `number` — 조합중인 char의 UTF-16 인덱스 (예: `compositionupdate` 시점의 `selectionStart`)
-- `null` — 명시적 "조합중 없음" (쿼리 뒤 공백 후 trim 케이스 등 caller가 확정 가능할 때)
-- `undefined` — caller가 모름 → spillMode 기본 동작 적용
-
-`tailSpillPenalty`는 `spillMode === "always"`일 때만 적용된다 (다른 모드에서는 spill 자체가 차단되어 무의미).
-
-초성-only grapheme과 non-Hangul(ASCII, 이모지)은 spillMode 영향을 받지 않는다.
-
-**Compound jongseong 예외 (IME 축약 복원)**: Compound jongseong(ㄶ/ㄺ/ㄻ/ㄼ/ㄽ/ㄾ/ㄿ/ㅀ/ㄳ/ㄵ/ㅄ)을 포함한 finalized grapheme은 `composingIndex`/`spillMode`/composing 인접 여부와 **무관하게** 항상 tail spill + anchor-extras-prefix 완화가 적용된다 (단, `allowChoseongMatch === true`일 때). 근거: 사용자가 "연하게"를 찾으려고 `연`+`ㅎ`+`ㄱ`(완전매치+초성매치+초성매치)을 입력하면 IME가 `ㄴ+ㅎ`을 `ㄶ`으로 결합시켜 `엲ㄱ`으로 축약하는데, 이 축약을 되돌려 원래 의도(ㅎ은 "하"의 초성, ㄱ은 "게"의 초성)로 복원 매치하는 동작이다. 따라서 `"막엲ㄱ"` vs `"막연하게"`는 `composingIndex=null`이든 `composingIndex=2`이든 매치된다. Single jongseong은 이 복원 대상이 아니므로 모든 위치에서 strict.
-
-**세션 최적화**: `createSearcher`는 직전 호출 대비 `spillMode`/`composingIndex`/`whitespace`/`allowChoseongMatch`가 바뀌면 세션을 자동 리셋한다.
-
-### allowChoseongMatch (초성매치 허용 토글)
-
-**`SearchOptions.allowChoseongMatch`** (기본 `true`, `match`/`matchBest` 6번째 인자):
+**`SearchOptions.strict`** (`matchBest` 4번째 인자):
 
 | 값 | 동작 |
 |---|---|
-| `true` (**기본값**) | 기존 동작 — 초성 자모 나열(`ㅁㅇㅎㄱ`)로 target 초성 매치 허용 |
-| `false` | 초성매치 의도 거부 — finalized 초성-only 쿼리 grapheme 차단 + compound jongseong 축약 복원도 비활성화 |
+| `false` (**기본값**) | 모든 한글 grapheme을 관대하게 매칭 — IME journey 수용 |
+| `true` | 모음 포함 쿼리 grapheme은 target anchor와 atom 시퀀스 정확 일치 요구 (tail spill 금지 + anchor 잉여 금지) |
 
-`false`일 때의 의도: caller가 초성 나열식 검색("ㅁㅇㅎㄱ") 및 IME가 자모를 compound로 축약한 복원 매치를 거부하고, composing grapheme 자체의 journey 관대 처리만 허용하려는 용도.
+초성-only grapheme과 non-Hangul은 `strict` 영향을 받지 않는다.
 
-- ✗ `ㅁㅇㅎㄱ` vs `막연하게` — 전부 finalized 초성-only (초성매치 거부)
-- ✗ `막엲ㄱ` vs `막연하게` — compound 축약 복원은 본질이 초성매치이므로 함께 거부 (`엲` strict → 불일치)
-- ✓ `ㅁ`+`composingIndex=0` vs `막연하게` — composing grapheme은 예외
-- ✓ `막엲` vs `막연하게` — `엲`이 composing (journey 중)
-- ✓ `막연학` vs `막연하게` — composing `학`의 자연 tail spill은 journey의 일부
+IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `strict=false`의 일반 lenient 매치로 자연 수용된다. 초성-only 쿼리(`ㅁㅇㅎㄱ`)도 동일하게 매치되며, 순위는 scoring(anchorFill)으로 하단에 밀려난다.
+
+**세션 최적화**: `createSearcher`는 직전 호출 대비 `strict`/`whitespace`/`literal`이 바뀌면 세션을 자동 리셋한다.
 
 ### whitespace 모드 (공백 처리)
 
@@ -118,27 +90,38 @@ atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 
 | `"literal"` (**기본값**) | 공백을 일반 atom으로 취급. `"a b"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일) |
 | `"ignore"` | 쿼리에서 공백 grapheme을 제거 후 매칭. `"a b"` ≡ `"ab"` (VSCode 파일 검색 스타일) |
 
-`ignore` 모드는 `buildQuery`에서 공백 grapheme을 drop하는 전처리만 수행. `match`/`matchBest` 알고리즘은 변경 없음. `matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
+`ignore` 모드는 `buildQuery`에서 공백 grapheme을 drop하는 전처리만 수행. `matchBest` 알고리즘은 변경 없음. `matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
 
-`ignore` 모드에서도 `Query.charIndexes`/`graphemeIndexes`는 **원본 input의 UTF-16 좌표를 유지**하므로, caller는 raw char offset 기준의 `composingIndex`를 그대로 전달하면 된다. 공백 char 위치의 `graphemeIndexes`는 "다음 non-space grapheme 인덱스"로 매핑된다 (후행 공백이면 `graphemes.length` → 조합중 없음으로 해석).
+### Scoring (5축 가산 합)
+
+`matchBest` DP 스코어는 모든 축의 단순 가산 합. 배율·후보정·discrete jump 없음.
+
+| 축 | 설명 |
+|---|---|
+| **anchorFill** | anchor 내부에서 쿼리가 소비한 atom ratio × 가중치. **다른 축을 지배**하는 주축 |
+| **positionZero** | 첫 매치가 target index 0에서 시작 시 고정 보너스 |
+| **boundary** | 단어 경계 매치당 고정 보너스 |
+| **consecutive** | 최종 indices의 인접 tgi 쌍 개수 × 가중치 (선형) |
+| **gapPenalty / targetLengthPenalty** | gap 거리 / target 길이 × 페널티 (선형, cap 없음) |
+| **graphemeBonus** | 사용자 정의 per-grapheme 보너스 |
+
+핵심 invariant: **완전 그래핌 매치 > 초성/부분 매치**. anchorFill이 다른 축 합을 지배하도록 기본 가중치를 잡는다.
 
 ## Public API (`src/index.ts`)
 
 ```
 buildQuery(input, opts?: { whitespace? }) → Query
 preprocessTarget(input) → Target
-match(query, target, composingIndex?, spillMode?, allowChoseongMatch?) → MatchResult | null
-matchBest(query, target, scoring?, composingIndex?, spillMode?, allowChoseongMatch?) → MatchResult | null (score 포함)
+matchBest(query, target, scoring?, strict?) → MatchResult | null (score 포함)
 matchLiteral(literal, target) → MatchResult | null
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 createSearcher(items, opts?) → Searcher (session 최적화 내장)
-  searcher.search(queryInput, options?, composingIndex?)
+  searcher.search(queryInput, options?)
 ```
 
 주요 타입:
-- `SpillMode` = `"always" | "composing" | "composingOrLast"` (기본 `"composingOrLast"`)
 - `WhitespaceMode` = `"literal" | "ignore"` (기본 `"literal"`)
-- `SearchOptions.allowChoseongMatch?: boolean` (기본 `true`)
+- `SearchOptions.strict?: boolean` (기본 `false`)
 
 ## Conventions
 

@@ -8,7 +8,6 @@ import type {
     SearcherOptions,
     SearchOptions,
     SearchResult,
-    SpillMode,
     Target,
     WhitespaceMode,
 } from "./types";
@@ -52,9 +51,7 @@ function heapReplace<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
  *
  * **IME 입력 세션 최적화**: 이전 쿼리의 atom prefix 확장이면
  * 이전에 매치된 아이템만 재검색하여 성능을 높인다.
- * `spillMode` 또는 `composingIndex`가 직전 호출과 달라지면 세션이 자동 단절되어 전체 재탐색한다.
- *
- * **spillMode/composingIndex 사용 패턴**은 {@link Searcher.search}와 {@link match} JSDoc 참조.
+ * `strict` / `whitespace` / `literal` 모드가 달라지면 세션이 자동 단절되어 전체 재탐색한다.
  *
  * @param items - 검색 대상 아이템 목록
  * @param options - T가 string이 아니면 `key` 함수 필수
@@ -84,30 +81,25 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
     // 세션 상태: 이전 쿼리의 atom 시퀀스, 매칭 모드, 매치된 엔트리 인덱스 배열
     let prevAtoms = "";
     let prevLiteral = false;
-    let prevSpillMode: SpillMode | undefined;
-    let prevComposingIndex: number | null | undefined;
+    let prevStrict: boolean | undefined;
     let prevWhitespace: WhitespaceMode | undefined;
-    let prevAllowChoseongMatch: boolean | undefined;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevAtoms = "";
         prevLiteral = false;
-        prevSpillMode = undefined;
-        prevComposingIndex = undefined;
+        prevStrict = undefined;
         prevWhitespace = undefined;
-        prevAllowChoseongMatch = undefined;
         prevMatchedIndices = null;
     }
 
     return {
-        search(queryInput: string, searchOpts: SearchOptions = {}, composingIndex?: number | null): SearchResult<T>[] {
+        search(queryInput: string, searchOpts: SearchOptions = {}): SearchResult<T>[] {
             const scoreFn = searchOpts.score;
             const limit = searchOpts.limit ?? 0;
             const scoringOpt = searchOpts.scoring;
-            const spillMode = searchOpts.spillMode;
+            const strict = searchOpts.strict ?? false;
             const whitespace: WhitespaceMode = searchOpts.whitespace ?? "literal";
-            const allowChoseongMatch = searchOpts.allowChoseongMatch;
             const resolveScoringConfig =
                 typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
 
@@ -116,17 +108,15 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
             // 현재 atoms가 이전 atoms의 확장인가?
-            // 매칭 모드(literal/fuzzy)나 spillMode/composingIndex/whitespace 상태가 달라지면 세션 단절
+            // 매칭 모드(literal/fuzzy)나 strict/whitespace 상태가 달라지면 세션 단절
             const currentLiteral = !!searchOpts.literal;
             const sessionIndices =
                 prevAtoms.length > 0 &&
                 currentAtoms.length > prevAtoms.length &&
                 currentAtoms.startsWith(prevAtoms) &&
                 prevLiteral === currentLiteral &&
-                prevSpillMode === spillMode &&
-                prevComposingIndex === composingIndex &&
+                prevStrict === strict &&
                 prevWhitespace === whitespace &&
-                prevAllowChoseongMatch === allowChoseongMatch &&
                 prevMatchedIndices !== null
                     ? prevMatchedIndices
                     : null;
@@ -136,7 +126,6 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             let results: SearchResult<T>[];
 
             if (limit > 0) {
-                // 상위 limit개만 유지하는 min-heap
                 const heap: SearchResult<T>[] = [];
                 let minScore = -Infinity;
                 const scan = sessionIndices ?? iota(entries.length);
@@ -144,14 +133,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 for (const i of scan) {
                     const t = entries[i].target;
                     const result = query
-                        ? matchBest(
-                              query,
-                              t,
-                              resolveScoringConfig ? resolveScoringConfig(t) : undefined,
-                              composingIndex,
-                              spillMode,
-                              allowChoseongMatch,
-                          )
+                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined, strict)
                         : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
@@ -173,21 +155,13 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
                 results = heap.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
             } else {
-                // limit 없음: 전체 수집 후 정렬
                 results = [];
                 const scan = sessionIndices ?? iota(entries.length);
 
                 for (const i of scan) {
                     const t = entries[i].target;
                     const result = query
-                        ? matchBest(
-                              query,
-                              t,
-                              resolveScoringConfig ? resolveScoringConfig(t) : undefined,
-                              composingIndex,
-                              spillMode,
-                              allowChoseongMatch,
-                          )
+                        ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined, strict)
                         : matchLiteral(queryInput, t);
                     if (result === null) continue;
 
@@ -202,10 +176,8 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
             prevAtoms = currentAtoms;
             prevLiteral = currentLiteral;
-            prevSpillMode = spillMode;
-            prevComposingIndex = composingIndex;
+            prevStrict = strict;
             prevWhitespace = whitespace;
-            prevAllowChoseongMatch = allowChoseongMatch;
             prevMatchedIndices = matchedIndices;
 
             return results;
@@ -233,7 +205,6 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
     };
 }
 
-// 0..n-1 인덱스 이터레이터 (세션 없을 때 전체 순회용)
 function* iota(n: number): Generator<number> {
     for (let i = 0; i < n; i++) yield i;
 }

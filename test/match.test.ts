@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildQuery, match, matchLiteral, preprocessTarget } from "../src/index";
+import { buildQuery, matchBest, matchLiteral, preprocessTarget } from "../src/index";
 import { journeyFrom } from "./ime";
 
-describe("match - 유닛 테스트", () => {
+describe("matchBest - 유닛 테스트", () => {
     describe("기본 매칭", () => {
         it("정확한 한글 매칭", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
             expect(Array.isArray(result!.indices)).toBe(true);
         });
@@ -15,28 +15,28 @@ describe("match - 유닛 테스트", () => {
         it("매칭 없음", () => {
             const query = buildQuery("미")!;
             const target = preprocessTarget("안녕하세요");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).toBeNull();
         });
 
         it("영문 매칭", () => {
             const query = buildQuery("abc")!;
             const target = preprocessTarget("abc");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("숫자 매칭", () => {
             const query = buildQuery("123")!;
             const target = preprocessTarget("123");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("이모지 매칭", () => {
             const query = buildQuery("😊")!;
             const target = preprocessTarget("😊");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
     });
@@ -90,43 +90,43 @@ describe("match - 유닛 테스트", () => {
         it("종성 있는 글자는 혼자서도 매치", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
 
         it("겹받침 글자 exact match", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
 
         it("종성이 다음 글자 초성으로 넘어가는 케이스 (감 → 감사)", () => {
             const query = buildQuery("감")!;
             const target = preprocessTarget("감사");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
 
         it("겹받침 → 이후 음절로 자연스럽게 소비 (값 → 값고)", () => {
             const query = buildQuery("값")!;
             const target = preprocessTarget("값고");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
 
         it("종성 없는 글자도 그대로 매치 (가 → 가나)", () => {
             const query = buildQuery("가")!;
             const target = preprocessTarget("가나");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
 
         it("연속 종성 글자 (각각 → 각각각)", () => {
             const query = buildQuery("각각")!;
             const target = preprocessTarget("각각각");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
 
         it("3글자 이상 (감사합 → 감사합니다)", () => {
             const query = buildQuery("감사합")!;
             const target = preprocessTarget("감사합니다");
-            expect(match(query, target)).not.toBeNull();
+            expect(matchBest(query, target)).not.toBeNull();
         });
     });
 
@@ -140,28 +140,28 @@ describe("match - 유닛 테스트", () => {
         it("빈 타겟", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).toBeNull();
         });
 
         it("여러 매칭 위치", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕 안녕");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("이모지 + 한글 혼합", () => {
             const query = buildQuery("녕")!;
             const target = preprocessTarget("안녕😊하세요");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("공백만 있는 쿼리", () => {
             const query = buildQuery("   ")!;
             const target = preprocessTarget("   안   ");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result === null || result.indices !== undefined).toBe(true);
         });
     });
@@ -170,7 +170,7 @@ describe("match - 유닛 테스트", () => {
         it("인덱스는 grapheme 범위 내", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             if (result) {
                 for (const idx of result.indices) {
                     expect(idx).toBeGreaterThanOrEqual(0);
@@ -184,14 +184,14 @@ describe("match - 유닛 테스트", () => {
         it("매우 긴 쿼리", () => {
             const longQuery = buildQuery("안".repeat(50))!;
             const target = preprocessTarget("안".repeat(100));
-            const result = match(longQuery, target);
+            const result = matchBest(longQuery, target);
             expect(result === null || result.indices !== undefined).toBe(true);
         });
 
         it("매우 긴 타겟", () => {
             const query = buildQuery("안")!;
             const longTarget = preprocessTarget("안녕하세요 ".repeat(200));
-            const result = match(query, longTarget);
+            const result = matchBest(query, longTarget);
             expect(result === null || result.indices !== undefined).toBe(true);
         });
 
@@ -207,14 +207,14 @@ describe("match - 유닛 테스트", () => {
         it("이모지 + 스킨톤", () => {
             const query = buildQuery("👋🏻")!;
             const target = preprocessTarget("👋🏻");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
 
         it("ZWJ 이모지", () => {
             const query = buildQuery("👨‍👩‍👧‍👦")!;
             const target = preprocessTarget("👨‍👩‍👧‍👦");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
     });
@@ -223,7 +223,7 @@ describe("match - 유닛 테스트", () => {
         it("타겟: 개정 절차 관련 참고, 쿼리: 절차", () => {
             const query = buildQuery("절차")!;
             const target = preprocessTarget("개정 절차 관련 참고");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
             expect(Array.isArray(result!.indices)).toBe(true);
         });
@@ -231,7 +231,7 @@ describe("match - 유닛 테스트", () => {
         it("타겟: 개정 절차 관련 참고, 쿼리: 절 (부분 매칭)", () => {
             const query = buildQuery("절")!;
             const target = preprocessTarget("개정 절차 관련 참고");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
             expect(Array.isArray(result!.indices)).toBe(true);
         });
@@ -239,24 +239,22 @@ describe("match - 유닛 테스트", () => {
         it("타겟: 개정 절차 관련 참고, 쿼리: 관련참고", () => {
             const query = buildQuery("관련참고")!;
             const target = preprocessTarget("개정 절차 관련 참고");
-            const result = match(query, target);
+            const result = matchBest(query, target);
             expect(result).not.toBeNull();
         });
     });
 
     describe("monotonic narrowing — 타이핑 journey 전체 검증", () => {
-        // journey 테스트는 liberal 매칭을 검증하므로 spillMode "always"로 고정.
-        // 단, tail이 있는 composing grapheme의 anchor 잉여는 tail prefix와 일치해야 하는
-        // 규칙(규칙 D)은 "always"에서도 적용된다 — "모음까지 입력했다면 사용자는 완전한 음절을
-        // 입력하려는 의도로 본다"가 전체 모드 공통 전제. 따라서 finalQueries에 넣는 쿼리는
-        // 해당 target으로 가는 IME journey에서 anchor 잉여가 tail prefix와 일치하는 경로여야 함.
+        // 기본 모드(strict=false)는 모든 한글 grapheme을 관대하게 매칭하므로 IME journey 전체가
+        // 매치되어야 한다. 단, anchor 내부에 남는 atoms는 쿼리 tail prefix와 일치해야 하는
+        // 규칙은 유지되므로 finalQueries는 그 조건을 만족하는 경로여야 한다.
         function assertJourneyMatches(targetStr: string, finalQueries: string[]) {
             const target = preprocessTarget(targetStr);
             for (const finalQuery of finalQueries) {
                 const journey = journeyFrom(finalQuery);
                 for (const state of journey) {
                     const q = buildQuery(state)!;
-                    const result = match(q, target, undefined, "always");
+                    const result = matchBest(q, target);
                     expect(
                         result,
                         `target "${targetStr}" / final "${finalQuery}" / mid-state "${state}"`,
@@ -287,8 +285,8 @@ describe("match - 유닛 테스트", () => {
 
         it("전략기획부 — 실패해야 하는 쿼리", () => {
             const target = preprocessTarget("전략기획부");
-            expect(match(buildQuery("쟈기획부")!, target)).toBeNull();
-            expect(match(buildQuery("ㄴㄺㅎ")!, target)).toBeNull();
+            expect(matchBest(buildQuery("쟈기획부")!, target)).toBeNull();
+            expect(matchBest(buildQuery("ㄴㄺㅎ")!, target)).toBeNull();
         });
 
         it("자산관리전략협의회 — 앞 4글자 완전 합성 + 초성 약식 (issue #6)", () => {
@@ -301,68 +299,53 @@ describe("match - 유닛 테스트", () => {
         it("startsAtZero - 첫 위치에서 매칭", () => {
             const query = buildQuery("안")!;
             const target = preprocessTarget("안녕하세요");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.startsAtZero).toBe(true);
         });
 
         it("startsAtZero - 중간에서 매칭", () => {
             const query = buildQuery("녕")!;
             const target = preprocessTarget("안녕하세요");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.startsAtZero).toBe(false);
         });
 
         it("runCount - 연속 매칭 (1 run)", () => {
             const query = buildQuery("안녕")!;
             const target = preprocessTarget("안녕하세요");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.runCount).toBe(1);
         });
 
         it("runCount - 떨어진 매칭 (2 runs)", () => {
             const query = buildQuery("안하")!;
             const target = preprocessTarget("안녕하세요");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.runCount).toBe(2);
         });
 
         it("boundaryHits - 구분자 직후 매칭", () => {
             const query = buildQuery("hw")!;
             const target = preprocessTarget("hello_world");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.boundaryHits).toBe(2);
         });
 
         it("boundaryHits - 구분자 없는 매칭", () => {
             const query = buildQuery("ll")!;
             const target = preprocessTarget("hello");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.boundaryHits).toBe(0);
-        });
-
-        it("initialConsonantOnly - 초성만 쿼리", () => {
-            const query = buildQuery("ㅇㄴ")!;
-            const target = preprocessTarget("안녕하세요");
-            const result = match(query, target)!;
-            expect(result.initialConsonantOnly).toBe(true);
-        });
-
-        it("initialConsonantOnly - 완성글자 쿼리", () => {
-            const query = buildQuery("안녕")!;
-            const target = preprocessTarget("안녕하세요");
-            const result = match(query, target)!;
-            expect(result.initialConsonantOnly).toBe(false);
         });
 
         it("빈 쿼리 메타데이터", () => {
             const query = buildQuery("")!;
             const target = preprocessTarget("안녕");
-            const result = match(query, target)!;
+            const result = matchBest(query, target)!;
             expect(result.indices).toEqual([]);
             expect(result.startsAtZero).toBe(false);
             expect(result.runCount).toBe(0);
             expect(result.boundaryHits).toBe(0);
-            expect(result.initialConsonantOnly).toBe(false);
         });
     });
 });

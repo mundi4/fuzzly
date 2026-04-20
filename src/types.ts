@@ -25,7 +25,7 @@ export type GraphemeIndices = number[];
 
 /**
  * 쿼리 문자열의 grapheme 하나에 대한 분해 정보.
- * `buildQuery`가 생성하며, `match`/`matchBest`의 매칭 단위가 된다.
+ * `buildQuery`가 생성하며, `matchBest`의 매칭 단위가 된다.
  */
 export interface QueryGrapheme {
     /** 원본 grapheme cluster 문자열 (예: "값", "a") */
@@ -36,12 +36,6 @@ export interface QueryGrapheme {
     vowelIndex: number;
     /** atoms 내 종성(tail) 시작 위치. 종성이 없으면 -1. */
     tailIndex: number;
-    /**
-     * tail atom이 2개 이상(ㄶ/ㄺ 등 compound jongseong 유래).
-     * IME 결합 중간상태로 해석되어 spillMode 완화 판정에 사용된다
-     * (composing grapheme 바로 앞 위치에서만 적용).
-     */
-    hasCompoundTail: boolean;
 }
 
 /**
@@ -49,15 +43,12 @@ export interface QueryGrapheme {
  *
  * - `"literal"` (기본): 공백을 일반 atom으로 취급. `"ab cd"`는 target에 literal 공백이 있어야 매치
  * - `"ignore"`: 쿼리에서 공백 grapheme을 제거 후 매칭. `"ab cd"` ≡ `"abcd"` (VSCode 파일 검색 스타일)
- *
- * ignore 모드에서도 `Query.charIndexes`/`graphemeIndexes`는 원본 input 좌표를 유지하므로
- * `composingIndex`는 caller의 raw char offset 그대로 전달하면 된다.
  */
 export type WhitespaceMode = "literal" | "ignore";
 
 /**
  * `buildQuery`의 출력. 사용자 입력을 grapheme 단위로 분해한 결과.
- * `match`, `matchBest`의 첫 번째 인자로 사용한다.
+ * `matchBest`의 첫 번째 인자로 사용한다.
  */
 export interface Query {
     /** 원본 입력 문자열 */
@@ -70,19 +61,6 @@ export interface Query {
      * (createSearcher의 세션 최적화).
      */
     atoms: string;
-    /**
-     * grapheme i → 원본 입력의 UTF-16 시작 문자 위치.
-     * `composingIndex`(char index)를 grapheme 인덱스로 변환할 때 사용한다.
-     * ignore 모드에서도 **원본 input의 UTF-16 offset**을 가리킨다.
-     */
-    charIndexes: Uint16Array;
-    /**
-     * 원본 input의 UTF-16 문자 위치 → grapheme 인덱스 매핑.
-     * multi-codepoint cluster 내의 모든 문자가 같은 grapheme 인덱스를 가리킨다.
-     * ignore 모드에서 공백 위치는 **다음 non-space grapheme 인덱스**로 매핑된다
-     * (후행 공백이면 `graphemes.length`).
-     */
-    graphemeIndexes: Uint16Array;
     /** 이 Query가 빌드된 공백 처리 모드 */
     whitespace: WhitespaceMode;
 }
@@ -142,7 +120,7 @@ export interface Target {
 }
 
 /**
- * `match`/`matchBest`의 반환값. 매칭 결과와 품질 메타데이터를 담는다.
+ * `matchBest`의 반환값. 매칭 결과와 품질 메타데이터를 담는다.
  */
 export type MatchResult = {
     /** 매치에 참여한 타겟 grapheme 인덱스 배열 (순서 유지) */
@@ -156,9 +134,7 @@ export type MatchResult = {
     runCount: number;
     /** 단어 경계에서 매치된 grapheme 수 */
     boundaryHits: number;
-    /** 쿼리가 초성(자음)만으로 구성되었는지 여부 */
-    initialConsonantOnly: boolean;
-    /** `matchBest`가 DP로 계산한 최적 정렬 스코어. `match`는 이 필드를 설정하지 않는다. */
+    /** `matchBest`가 DP로 계산한 최적 정렬 스코어 */
     score?: number;
 };
 
@@ -173,43 +149,38 @@ export type MatchRange = {
     end: number;
 };
 
-export type ScoringWeights = {
-    positionZero?: number;
-    boundary?: number;
-    consecutive?: number;
-    gapPenalty?: number;
-    prefixBonus?: number;
-    exactBonus?: number;
-    targetLengthPenalty?: number;
-    lengthPenaltyCap?: number;
-    choseongWeaken?: number;
-    /**
-     * 종성이 anchor grapheme 밖으로 spill된 candidate에 가산되는 페널티.
-     * **`spillMode === "always"` 일 때만 적용된다.** 다른 spillMode에서는
-     * tail spill 자체가 차단되어 이 값과 무관하게 동작한다.
-     */
-    tailSpillPenalty?: number;
-};
-
 /**
- * finalized(확정된) grapheme에 대한 구조 매치 엄격성 정책.
+ * 스코어링 가중치.
  *
- * - `"always"`: 모든 grapheme을 조합중처럼 취급 (기존 동작, 모든 tail spill 허용)
- * - `"composing"`: 호출 시 넘긴 `composingIndex`가 가리키는 grapheme만 관대하게 매칭. 없으면 전부 엄격
- * - `"composingOrLast"`: `composingIndex` 명시 시 그것만, `undefined`면 마지막 grapheme 추정,
- *   `null`이면 아무것도 조합중 아님 (명시적 none, 공백 뒤 trim 케이스)
+ * 스코어는 가산형 5축 합으로 계산된다:
+ * - `anchorFill` × (anchor 내부에서 소비된 atom 비율) — 완전 그래핌 매치 유도의 주축
+ * - `positionZero` (첫 grapheme이 target index 0)
+ * - `boundary` × (단어 경계 매치 수)
+ * - `consecutive` × (indices 내 인접 tgi 쌍 수)
+ * - `gapPenalty` × (gap 거리) + `targetLengthPenalty` × T
+ * - per-grapheme `graphemeBonus` (ScoringConfig)
  *
- * Finalized + 모음 포함 grapheme은 anchor target grapheme과 atom 시퀀스가
- * 정확히 일치해야 매치된다 (tail spill 금지 + anchor 잉여 atom 금지).
- *
- * **Compound jongseong 예외**: composing 바로 앞 위치의 finalized grapheme이
- * compound jongseong(ㄶ/ㄺ 등 `hasCompoundTail=true`)을 포함하면 자동으로
- * 조합중으로 승격된다 — IME 결합 중간상태 대응 (예: `막엲ㄱ` vs `막연하게` 매치).
- *
- * `composingIndex`는 쿼리 문자열의 UTF-16 인덱스이며 호출 시점마다 변하는 상태이므로
- * `SearchOptions`에 포함되지 않고 `search()` 함수의 별도 인자로 전달한다.
+ * 초성-only 쿼리, tail spill, IME 축약 복원 등은 별도 축 없이
+ * **anchorFill 비율이 낮아지는 자연스러운 감점**으로 후순위가 된다.
  */
-export type SpillMode = "always" | "composing" | "composingOrLast";
+export type ScoringWeights = {
+    /**
+     * anchor(target) grapheme 내부에서 쿼리가 소비한 atom 비율에 곱해지는 가중치.
+     * 완전 매치(ratio=1.0) 대비 얇은 매치(초성-only ratio=1/3 등)가 후순위가 되도록
+     * 다른 축보다 지배적인 값을 기본으로 설정한다.
+     */
+    anchorFill?: number;
+    /** 첫 매치가 target index 0에서 시작할 때의 보너스 */
+    positionZero?: number;
+    /** 단어 경계 매치 하나당 보너스 */
+    boundary?: number;
+    /** 최종 indices에서 인접 tgi 쌍 한 쌍당 보너스 (선형) */
+    consecutive?: number;
+    /** gap 거리에 비례하는 페널티 (음수) */
+    gapPenalty?: number;
+    /** target 길이에 비례하는 페널티 (음수, cap 없음) */
+    targetLengthPenalty?: number;
+};
 
 export type ScoringConfig = {
     weights?: ScoringWeights;
@@ -225,26 +196,20 @@ export type SearchOptions = {
     literal?: boolean;
     score?: (result: MatchResult, target: Target) => number;
     scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
-    /** finalized 구조 엄격성 정책. 기본값: `"composingOrLast"` */
-    spillMode?: SpillMode;
     /**
-     * 쿼리 공백 처리 정책. 기본값: `"literal"` (현재 동작, 백워드 호환).
+     * 엄격 매칭 모드. 기본 `false` (모든 한글 grapheme을 관대하게 매칭).
+     *
+     * `true`로 지정하면 모음이 포함된 쿼리 grapheme은 target anchor와 atom 시퀀스가
+     * 정확히 일치해야 매치된다 (tail spill 금지 + anchor 잉여 atom 금지).
+     * 초성-only grapheme과 non-Hangul은 영향을 받지 않는다.
+     */
+    strict?: boolean;
+    /**
+     * 쿼리 공백 처리 정책. 기본값: `"literal"`.
      * `"ignore"`로 지정하면 쿼리에서 공백 grapheme을 제거 후 매칭.
      * @see {@link WhitespaceMode}
      */
     whitespace?: WhitespaceMode;
-    /**
-     * 초성(choseong) 전용 매칭 허용 여부. 기본값: `true` (기존 동작).
-     *
-     * `false`로 지정하면 "journey 매칭"만 허용:
-     * - Finalized 초성-only 쿼리 grapheme(예: `ㅁ`) → 매치 실패
-     *   (composing grapheme은 IME 타이핑 중간상태이므로 예외적으로 허용)
-     * - Finalized compound jongseong(ㄶ/ㄺ 등) 완화 비활성화 → `엲` 등이 다시 strict
-     *
-     * 즉 `ㅁㅇㅎㄱ` 같은 초성 나열 쿼리와 `막엲ㄱ`(IME 결합 중간상태)이 차단되며,
-     * `막ㅇ`·`막엲` 등 composing 위치의 유효한 IME journey는 계속 매치된다.
-     */
-    allowChoseongMatch?: boolean;
 };
 
 export type SearchResult<T = string> = {
@@ -256,13 +221,7 @@ export type SearchResult<T = string> = {
 };
 
 export interface Searcher<T = string> {
-    /**
-     * @param queryInput - 쿼리 문자열
-     * @param options - 검색 옵션 (limit, spillMode 등)
-     * @param composingIndex - 조합중인 char의 UTF-16 인덱스 (상태; 매 호출 변함).
-     *   `number` = 해당 위치 grapheme 조합중 / `null` = 명시적 없음 / `undefined` = 모름
-     */
-    search(queryInput: string, options?: SearchOptions, composingIndex?: number | null): SearchResult<T>[];
+    search(queryInput: string, options?: SearchOptions): SearchResult<T>[];
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;

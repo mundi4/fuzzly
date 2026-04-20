@@ -64,10 +64,10 @@ interface Handlers {
  * transient `composingIndex=null` flicker.
  *
  * ```tsx
- * const { text, composingIndex, ref, reset } = useFuzzlyInput<HTMLInputElement>({
+ * const { text, ref, reset } = useFuzzlyInput<HTMLInputElement>({
  *   defaultValue: initialQuery,
  * });
- * const results = searcher.search(text, {}, composingIndex);
+ * const results = searcher.search(text);
  * return <input ref={ref} defaultValue="" />;
  * ```
  *

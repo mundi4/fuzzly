@@ -23,96 +23,37 @@ describe("ScoringConfig - weights override", () => {
 
     it("gapPenalty 오버라이드로 정렬 변경", () => {
         const query = buildQuery("ac");
-        // "a_b_c"에서 a(0), c(4): gap이 크다
-        // "axc"에서 a(0), c(2): gap이 작다
         const t1 = preprocessTarget("a_b_c");
         const t2 = preprocessTarget("axc");
-
-        // 극단적 gap penalty로 gap이 큰 타겟을 더 많이 불이익
         const scoring: ScoringConfig = { weights: { gapPenalty: -100 } };
         const r1 = matchBest(query, t1, scoring)!;
         const r2 = matchBest(query, t2, scoring)!;
         expect(r2.score!).toBeGreaterThan(r1.score!);
     });
 
-    it("모든 weights 동시 오버라이드", () => {
+    it("anchorFill 오버라이드", () => {
+        const query = buildQuery("ㅈ");
+        const target = preprocessTarget("정의");
+        const rDefault = matchBest(query, target)!;
+        const rHigher = matchBest(query, target, { weights: { anchorFill: 1000 } })!;
+        expect(rHigher.score!).toBeGreaterThan(rDefault.score!);
+    });
+
+    it("모든 weights 동시 오버라이드 0으로", () => {
         const query = buildQuery("안녕");
         const target = preprocessTarget("안녕");
         const scoring: ScoringConfig = {
             weights: {
+                anchorFill: 0,
                 positionZero: 0,
                 boundary: 0,
                 consecutive: 0,
                 gapPenalty: 0,
-                prefixBonus: 0,
-                exactBonus: 0,
                 targetLengthPenalty: 0,
-                lengthPenaltyCap: 16,
-                choseongWeaken: 0.5,
             },
         };
         const result = matchBest(query, target, scoring)!;
-        // 모든 스코어 관련 가중치가 0이면 스코어도 0
         expect(result.score).toBe(0);
-    });
-});
-
-describe("ScoringConfig - 신규 가중치 clamp", () => {
-    it("lengthPenaltyCap 음수 입력은 0으로 clamp (페널티 비활성)", () => {
-        const query = buildQuery("a");
-        const t = preprocessTarget("abcdefghij"); // L=10
-        const rBaseline = matchBest(query, t, { weights: { lengthPenaltyCap: 0 } })!;
-        const rNegative = matchBest(query, t, { weights: { lengthPenaltyCap: -5 } })!;
-        // 음수 → 0으로 clamp. cap=0 과 동일 결과.
-        expect(rNegative.score).toBe(rBaseline.score);
-    });
-
-    it("lengthPenaltyCap 소수 입력은 floor 처리", () => {
-        const query = buildQuery("a");
-        const t = preprocessTarget("abcdefghij"); // L=10
-        const rInt = matchBest(query, t, { weights: { lengthPenaltyCap: 5 } })!;
-        const rFloat = matchBest(query, t, { weights: { lengthPenaltyCap: 5.9 } })!;
-        // 5.9 → 5 로 floor. cap=5 와 동일.
-        expect(rFloat.score).toBe(rInt.score);
-    });
-
-    it("lengthPenaltyCap NaN/Infinity는 기본값 fallback", () => {
-        const query = buildQuery("a");
-        const t = preprocessTarget("abcdefghij");
-        const rDefault = matchBest(query, t)!;
-        const rNaN = matchBest(query, t, { weights: { lengthPenaltyCap: Number.NaN } })!;
-        const rInf = matchBest(query, t, { weights: { lengthPenaltyCap: Number.POSITIVE_INFINITY } })!;
-        expect(rNaN.score).toBe(rDefault.score);
-        expect(rInf.score).toBe(rDefault.score);
-    });
-
-    it("choseongWeaken 0 이하는 기본값 fallback", () => {
-        const q = buildQuery("ㅈ");
-        const t = preprocessTarget("정의");
-        const rDefault = matchBest(q, t)!;
-        const rZero = matchBest(q, t, { weights: { choseongWeaken: 0 } })!;
-        const rNeg = matchBest(q, t, { weights: { choseongWeaken: -0.5 } })!;
-        // 0, 음수 모두 기본값(0.5)으로 fallback
-        expect(rZero.score).toBe(rDefault.score);
-        expect(rNeg.score).toBe(rDefault.score);
-    });
-
-    it("choseongWeaken 1 초과는 1 로 clamp", () => {
-        const q = buildQuery("ㅈ");
-        const t = preprocessTarget("정의");
-        const rOne = matchBest(q, t, { weights: { choseongWeaken: 1 } })!;
-        const rBig = matchBest(q, t, { weights: { choseongWeaken: 10 } })!;
-        expect(rBig.score).toBe(rOne.score);
-    });
-
-    it("choseongWeaken NaN/Infinity는 기본값 fallback", () => {
-        const q = buildQuery("ㅈ");
-        const t = preprocessTarget("정의");
-        const rDefault = matchBest(q, t)!;
-        const rNaN = matchBest(q, t, { weights: { choseongWeaken: Number.NaN } })!;
-        const rInf = matchBest(q, t, { weights: { choseongWeaken: Number.POSITIVE_INFINITY } })!;
-        expect(rNaN.score).toBe(rDefault.score);
-        expect(rInf.score).toBe(rDefault.score);
     });
 });
 
@@ -120,7 +61,6 @@ describe("ScoringConfig - graphemeBonus (배열)", () => {
     it("특정 위치에 bonus 부여", () => {
         const query = buildQuery("하");
         const target = preprocessTarget("안녕하세요");
-        // "하"는 grapheme index 2에 위치
         const bonuses = [0, 0, 200, 0, 0];
         const rDefault = matchBest(query, target)!;
         const rBoosted = matchBest(query, target, { graphemeBonus: bonuses })!;
@@ -130,30 +70,19 @@ describe("ScoringConfig - graphemeBonus (배열)", () => {
     it("bonus 배열이 짧으면 부족한 인덱스는 0 취급", () => {
         const query = buildQuery("요");
         const target = preprocessTarget("안녕하세요");
-        // "요"는 grapheme index 4 — bonus 배열 길이가 2이므로 0 취급
         const rDefault = matchBest(query, target)!;
         const rShort = matchBest(query, target, { graphemeBonus: [100, 100] })!;
         expect(rShort.score).toBe(rDefault.score);
     });
 
     it("graphemeBonus로 DP 정렬 경로 변경", () => {
-        // "ㅎ"을 "기획 홍보 협력"에서 검색.
-        // grapheme 분해: 기(0) 획(1) (2=공백) 홍(3) 보(4) (5=공백) 협(6) 력(7)
-        // 기본: 기획의 '획'(index 1, lead=ㅎ)은 위치 0에 가까움
-        //       홍(3)은 경계, 협(6)도 경계
-        // graphemeBonus로 index 6(협)에 큰 보너스를 주면 DP가 협을 선택하도록 유도
         const query = buildQuery("ㅎ");
         const target = preprocessTarget("기획 홍보 협력");
-
         const rDefault = matchBest(query, target)!;
-        // 기본 DP는 획(1) 또는 홍(3)을 선택할 가능성이 높음
         expect(rDefault.indices).not.toContain(6);
 
-        // index 6에 큰 bonus
         const bonuses = [0, 0, 0, 0, 0, 0, 500, 0];
         const rBoosted = matchBest(query, target, { graphemeBonus: bonuses })!;
-
-        // bonus가 충분히 크면 index 6(협)을 선택해야 함
         expect(rBoosted.indices).toContain(6);
     });
 });
@@ -174,12 +103,10 @@ describe("ScoringConfig - graphemeBonus (함수)", () => {
         const target = preprocessTarget("abc");
         const rBoosted = matchBest(query, target, {
             graphemeBonus: (gi, t) => {
-                // target의 normalizedInput 길이에 비례하는 bonus
                 return gi === 0 ? t.normalizedInput.length * 10 : 0;
             },
         })!;
         expect(rBoosted).not.toBeNull();
-        // "abc" 길이 3, bonus = 30
         const rDefault = matchBest(query, target)!;
         expect(rBoosted.score!).toBe(rDefault.score! + 30);
     });
@@ -188,8 +115,6 @@ describe("ScoringConfig - graphemeBonus (함수)", () => {
 describe("createGraphemeBonuses", () => {
     it("문자 범위를 grapheme bonus 배열로 변환", () => {
         const target = preprocessTarget("안녕하세요");
-        // 각 한글은 1 grapheme = charIndexes: 안(0), 녕(1), 하(2), 세(3), 요(4)
-        // char range [2, 4) → grapheme 2,3 ("하세")
         const bonuses = createGraphemeBonuses(target, [{ start: 2, end: 4, bonus: 50 }]);
         expect(bonuses.length).toBe(5);
         expect(bonuses[0]).toBe(0);
@@ -202,14 +127,14 @@ describe("createGraphemeBonuses", () => {
     it("여러 범위의 bonus 누적", () => {
         const target = preprocessTarget("abcde");
         const bonuses = createGraphemeBonuses(target, [
-            { start: 0, end: 3, bonus: 10 }, // a,b,c
-            { start: 2, end: 5, bonus: 20 }, // c,d,e
+            { start: 0, end: 3, bonus: 10 },
+            { start: 2, end: 5, bonus: 20 },
         ]);
-        expect(bonuses[0]).toBe(10); // a: 10
-        expect(bonuses[1]).toBe(10); // b: 10
-        expect(bonuses[2]).toBe(30); // c: 10+20
-        expect(bonuses[3]).toBe(20); // d: 20
-        expect(bonuses[4]).toBe(20); // e: 20
+        expect(bonuses[0]).toBe(10);
+        expect(bonuses[1]).toBe(10);
+        expect(bonuses[2]).toBe(30);
+        expect(bonuses[3]).toBe(20);
+        expect(bonuses[4]).toBe(20);
     });
 
     it("빈 범위 무시", () => {
@@ -221,7 +146,6 @@ describe("createGraphemeBonuses", () => {
     it("matchBest와 연동", () => {
         const query = buildQuery("설");
         const target = preprocessTarget("프로젝트 설정 파일");
-        // "설"에 해당하는 문자 범위에 가중치
         const bonuses = createGraphemeBonuses(target, [{ start: 5, end: 7, bonus: 100 }]);
         const rDefault = matchBest(query, target)!;
         const rBoosted = matchBest(query, target, { graphemeBonus: bonuses })!;
@@ -229,56 +153,22 @@ describe("createGraphemeBonuses", () => {
     });
 });
 
-describe("ScoringConfig - tailSpillPenalty", () => {
-    // spill 예시는 '읽'=[ㅇㅣㄹㄱ] 기반: anchor '일' 잉여 [ㄹ]이 쿼리 tail prefix [ㄹ]와 일치해
-    // anchor가 승인되고, 남은 ㄱ이 다음 grapheme 초성으로 spill된다.
-    // issue #15 internalRunLen bonus 이후 spilled 후보의 consecutive 누적이 exactBonus 우위를
-    // 상회한다 — draft 단계이며 exact 우선 보장은 추후 별도 장치로 재조정할 수 있다.
-    it("spill 매치가 exact를 score로 역전 (internalRunLen bonus; draft)", () => {
-        const query = buildQuery("제2읽");
-        const exact = preprocessTarget("제2읽");
-        const spilled = preprocessTarget("제2일기");
-        const rExact = matchBest(query, exact)!;
-        const rSpilled = matchBest(query, spilled)!;
-        expect(rSpilled.score!).toBeGreaterThan(rExact.score!);
+describe("anchorFill invariant - 완전 매치 > 얇은 매치", () => {
+    it("'막연하게' 완전 매치가 'ㅁㅇㅎㄱ' 초성 매치보다 높은 점수", () => {
+        const target = preprocessTarget("막연하게");
+        const rChoseong = matchBest(buildQuery("ㅁㅇㅎㄱ"), target)!;
+        const rFull = matchBest(buildQuery("막연하게"), target)!;
+        expect(rFull.score!).toBeGreaterThan(rChoseong.score!);
     });
 
-    it("tailSpillPenalty 오버라이드는 default spillMode에서 무효 (diff 불변)", () => {
-        // default spillMode(composingOrLast)에서는 tailSpillPenalty가 적용되지 않으므로
-        // 가중치 override는 스코어에 영향을 주지 않는다. 두 스코어가 동일해야 한다.
-        const query = buildQuery("제2읽");
-        const exact = preprocessTarget("제2읽");
-        const spilled = preprocessTarget("제2일기");
-        const rExactDefault = matchBest(query, exact)!;
-        const rSpilledDefault = matchBest(query, spilled)!;
-        const scoring: ScoringConfig = { weights: { tailSpillPenalty: -999 } };
-        const rExact = matchBest(query, exact, scoring)!;
-        const rSpilled = matchBest(query, spilled, scoring)!;
-        expect(rExact.score).toBe(rExactDefault.score);
-        expect(rSpilled.score).toBe(rSpilledDefault.score);
-    });
-
-    it("주요 시나리오: 제2읽 vs 제2일 기타", () => {
-        const query = buildQuery("제2읽");
-        const rExact = matchBest(query, preprocessTarget("제2읽"))!;
-        const rSpilled = matchBest(query, preprocessTarget("제2일 기타"))!;
-        expect(rExact.score!).toBeGreaterThan(rSpilled.score!);
-    });
-
-    it("tail 없는 쿼리는 페널티 영향 없음", () => {
-        const query = buildQuery("제");
-        const target = preprocessTarget("제안");
-        const rDefault = matchBest(query, target)!;
-        const rZero = matchBest(query, target, { weights: { tailSpillPenalty: 0 } })!;
-        expect(rDefault.score).toBe(rZero.score);
-    });
-
-    it("오버라이드 값만큼 정확히 차이 (spillMode=always)", () => {
-        const query = buildQuery("읽");
-        const target = preprocessTarget("일기");
-        const r0 = matchBest(query, target, { weights: { tailSpillPenalty: 0 } }, undefined, "always")!;
-        const rNeg = matchBest(query, target, { weights: { tailSpillPenalty: -100 } }, undefined, "always")!;
-        expect(r0.score! - rNeg.score!).toBe(100);
+    it("부분 음절 매치가 초성보다 높고 완전 매치보다 낮음", () => {
+        const target = preprocessTarget("막연하게");
+        const rChoseong = matchBest(buildQuery("ㅁㅇㅎㄱ"), target)!;
+        const rPartial = matchBest(buildQuery("막엲ㄱ"), target)!;
+        const rFull = matchBest(buildQuery("막연하게"), target)!;
+        // 막연하게 완전 매치가 가장 높아야 함
+        expect(rFull.score!).toBeGreaterThan(rPartial.score!);
+        expect(rPartial.score!).toBeGreaterThan(rChoseong.score!);
     });
 });
 
@@ -297,12 +187,10 @@ describe("createSearcher - scoring option", () => {
         const searcher = createSearcher(["가나다라", "마바사아", "가마바사"]);
         const results = searcher.search("가", {
             scoring: (target) => ({
-                // 짧은 타겟에 grapheme bonus
                 graphemeBonus: (gi) => (target.graphemeCount <= 4 && gi === 0 ? 200 : 0),
             }),
         });
         expect(results.length).toBeGreaterThan(0);
-        // 모든 결과에 score가 있어야 함
         for (const r of results) {
             expect(typeof r.score).toBe("number");
         }
@@ -324,91 +212,5 @@ describe("createSearcher - scoring option", () => {
             scoring: { weights: { positionZero: 300 } },
         });
         expect(results.length).toBe(2);
-    });
-});
-
-describe("issue #15 — internalRunLen bonus (candidate 내부 연속)", () => {
-    // 이슈 본문 weights 기준 (cons=100). `깅`(1 grapheme, tail spill)과 `기ㅇ`(2 graphemes)이
-    // 타겟 "기업"(tgi=10,11)에서 동일한 indices로 매치될 때 consecutive 기여가 동등해야 한다.
-    const issueWeights: ScoringConfig = {
-        weights: {
-            positionZero: 20,
-            boundary: 20,
-            consecutive: 100,
-            prefixBonus: 0,
-            exactBonus: 200,
-        },
-    };
-
-    it("`깅` vs `기업` 이 consecutive bonus 를 받아 `기ㅇ` 와 동등", () => {
-        const target = preprocessTarget("여신 > 지침 > 기업여신업무지침");
-        const r1 = matchBest(buildQuery("깅"), target, issueWeights)!;
-        const r2 = matchBest(buildQuery("기ㅇ"), target, issueWeights)!;
-        expect(r1).not.toBeNull();
-        expect(r2).not.toBeNull();
-        // indices 동일
-        expect(r1.indices).toEqual([10, 11]);
-        expect(r2.indices).toEqual([10, 11]);
-        // score는 쿼리 구성에 독립적 (쿼리 형태에 따른 비대칭 제거)
-        expect(r1.score).toBe(r2.score);
-    });
-
-    it("consonant-only `ㄶ` vs `노하` 도 internalRunLen bonus 수여", () => {
-        // ㄶ=[ㄴ,ㅎ] 단일 grapheme이 [노,하] 연속 2 tgi 를 먹음 → internalRunLen=2
-        const target = preprocessTarget("노하");
-        const r = matchBest(buildQuery("ㄶ"), target)!;
-        expect(r).not.toBeNull();
-        expect(r!.indices).toEqual([0, 1]);
-    });
-
-    it("compound jongseong 완화 — `막엲ㄱ` vs `막연하게` 매치 성공 (기존 동작 유지)", () => {
-        const r = matchBest(buildQuery("막엲ㄱ"), preprocessTarget("막연하게"))!;
-        expect(r).not.toBeNull();
-        expect(r!.indices).toEqual([0, 1, 2, 3]);
-    });
-});
-
-describe("ㄱㅇ baseline score", () => {
-    it("두 타겟 스코어 출력", () => {
-        const query = buildQuery("ㄱㅇ");
-        const t1 = preprocessTarget("기업금융인력 운영 및 양성 > 제1장 총칙");
-        const t2 = preprocessTarget("여신 > 지침 > 기업여신업무지침");
-
-        const r1 = matchBest(query, t1)!;
-        const r2 = matchBest(query, t2)!;
-
-        console.log("T1 score:", r1.score, "indices:", r1.indices);
-        console.log("T2 score:", r2.score, "indices:", r2.indices);
-
-        expect(r1.score).toBe(299);
-        expect(r1.indices).toEqual([0, 1]);
-        expect(r2.score).toBe(94);
-        expect(r2.indices).toEqual([10, 11]);
-    });
-});
-
-describe("ㄱㅇ with bonus after last '>'", () => {
-    it("마지막 > 이후 char에 +50", () => {
-        const query = buildQuery("ㄱㅇ");
-
-        const src1 = "기업금융인력 운영 및 양성 > 제1장 총칙";
-        const src2 = "여신 > 지침 > 기업여신업무지침";
-
-        const t1 = preprocessTarget(src1);
-        const t2 = preprocessTarget(src2);
-
-        const bonuses1 = createGraphemeBonuses(t1, [{ start: src1.lastIndexOf(">") + 1, end: src1.length, bonus: 50 }]);
-        const bonuses2 = createGraphemeBonuses(t2, [{ start: src2.lastIndexOf(">") + 1, end: src2.length, bonus: 50 }]);
-
-        const r1 = matchBest(query, t1, { graphemeBonus: bonuses1 })!;
-        const r2 = matchBest(query, t2, { graphemeBonus: bonuses2 })!;
-
-        console.log("T1 boosted score:", r1.score, "indices:", r1.indices);
-        console.log("T2 boosted score:", r2.score, "indices:", r2.indices);
-
-        expect(r1.score).toBe(299);
-        expect(r1.indices).toEqual([0, 1]);
-        expect(r2.score).toBe(194);
-        expect(r2.indices).toEqual([10, 11]);
     });
 });
