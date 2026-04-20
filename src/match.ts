@@ -112,8 +112,8 @@ type Candidate = {
     indices: number[];
     /**
      * anchor별 소비된 atom 수 (indices와 같은 길이).
-    * candidatePositionScore에서 각 anchor는 `anchorFill × filledAtoms[i]^2`만큼 기여한다.
-    * graphemeBonus도 같은 `filledAtoms[i]`를 per-atom 승수로 사용한다.
+     * candidatePositionScore에서 각 anchor는 `anchorFill × filledAtoms[i]^2`만큼 기여한다.
+     * graphemeBonus도 같은 `filledAtoms[i]`를 per-atom 승수로 사용한다.
      */
     filledAtoms: number[];
     // candidate 내부에서 타겟 tgi 연속으로 매치된 prefix 길이 (1 이상).
@@ -330,19 +330,33 @@ function findCandidates(qg: QueryGrapheme, target: Target, minTgi: number, stric
     return findExactCandidates(qg.atoms, target, minTgi);
 }
 
-// DP 상태: 각 (qi, ci)에서 도달 가능한 최고 스코어와 backtrack용 부모 candidate index.
-// 선형 consecutive에서는 미래 기여가 endTgi에만 의존하므로 (score, runLen) Pareto가 불필요 —
-// (qi, ci)당 단일 best score만 추적하면 충분하다.
+// DP 상태: 각 (qi, ci)에서 도달 가능한 최고 스코어 + backtrack 부모 + 현재 trailing run 길이.
+// consecutive 보너스는 (run_length - 1)² × cons 로 비선형이라 동일 (qi, ci)에 서로 다른
+// (score, runLen) 상태가 공존할 수 있다 (runLen이 클수록 future cons bridge에서 유리).
+// 각 runLen 버킷당 best score 하나씩만 유지 (같은 runLen이면 높은 score가 항상 우위).
 type DPState = {
     score: number;
     parentPci: number;
+    parentRunLen: number;
+    runLen: number;
 };
 
-// candidate 내부 tgi 연속 실행에 대한 consecutive 보너스 (선형).
-// n atom 이 연속이면 (n-1) 쌍 × cons.
-function intraRunBonus(internalRunLen: number, consecutive: number): number {
-    if (internalRunLen <= 1) return 0;
-    return consecutive * (internalRunLen - 1);
+// cand 배치 후 cand.endTgi 위치에서 끝나는 trailing consecutive run의 길이.
+// - indices 전체가 연속(internalRunLen === indices.length): 전체가 한 run, 길이 L
+// - spill 구조(internalRunLen === 1, indices.length > 1): endTgi는 고립된 위치, 길이 1
+// - 단일 위치(indices.length === 1): 길이 1
+function candTrailingL(c: Candidate): number {
+    return c.internalRunLen === c.indices.length ? c.internalRunLen : 1;
+}
+
+// cand 단독 배치 시(gap 혹은 qi=0) 내부 cons 보너스.
+// 연속 run L의 기여 = (L-1)² × cons. spill 구조는 내부 모든 위치가 고립이라 0.
+function candStandaloneBonus(c: Candidate, consecutive: number): number {
+    if (c.internalRunLen === c.indices.length && c.internalRunLen > 1) {
+        const L = c.internalRunLen;
+        return (L - 1) * (L - 1) * consecutive;
+    }
+    return 0;
 }
 
 function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring): number {
@@ -412,126 +426,144 @@ export function matchBest(
         allCandidates.push(candidates);
     }
 
-    // Phase 2: DP — 각 (qi, ci)당 최고 스코어 하나만 추적.
-    // 선형 consecutive: bridge 보너스가 고정 cons이므로 미래 기여는 endTgi에만 의존하고
-    // prev의 score가 높으면 무조건 유리. (score, runLen) Pareto가 단일 best로 붕괴된다.
-    const dp: DPState[][] = [];
+    // Phase 2: DP — 각 (qi, ci)마다 runLen별 best state를 배열로 유지.
+    // consecutive 기여가 (run_len - 1)² × cons (비선형)이라 동일 (qi, ci)에 서로 다른
+    // (score, runLen)이 공존할 수 있다 (runLen이 길면 future cons에서 유리). 같은 runLen
+    // 이면 높은 score가 항상 우위이므로 runLen당 하나만 유지.
+    const dp: DPState[][][] = [];
 
-    const firstStates: DPState[] = [];
+    const firstStates: DPState[][] = [];
     for (let ci = 0; ci < allCandidates[0].length; ci++) {
         const c = allCandidates[0][ci];
         const posScore = candidatePositionScore(c, target, sc);
-        firstStates.push({
-            score: posScore + intraRunBonus(c.internalRunLen, sc.consecutive),
-            parentPci: -1,
-        });
+        firstStates.push([
+            {
+                score: posScore + candStandaloneBonus(c, sc.consecutive),
+                parentPci: -1,
+                parentRunLen: -1,
+                runLen: candTrailingL(c),
+            },
+        ]);
     }
     dp.push(firstStates);
-
-    // 재사용 버퍼: prev endTgi → 그 위치에서 끝나는 prev candidate들 중 최고 스코어와 pci.
-    // qi마다 reset.
-    type ConsBest = { score: number; pci: number };
-    const bestByEnd: (ConsBest | undefined)[] = new Array(T);
 
     for (let qi = 1; qi < Q; qi++) {
         const currCandidates = allCandidates[qi];
         const prevCands = allCandidates[qi - 1];
-        const prevStates = dp[qi - 1];
-        const currStates: DPState[] = [];
-
-        // gap path: gapVal = score - gapPenalty*endTgi. startTgi가 단조증가하므로
-        // gapPreds를 endTgi 오름차순으로 정렬해두고 prefix-max를 monotonic scan.
-        type GapPred = { endTgi: number; gapVal: number; pci: number };
-        const gapPreds: GapPred[] = [];
-        const consUsed: number[] = [];
-        for (let pci = 0; pci < prevCands.length; pci++) {
-            const prevScore = prevStates[pci].score;
-            if (prevScore === -Infinity) continue;
-            const e = prevCands[pci].endTgi;
-            // cons 전용: prev endTgi에서 끝나는 best score 추적
-            const cur = bestByEnd[e];
-            if (cur === undefined) {
-                bestByEnd[e] = { score: prevScore, pci };
-                consUsed.push(e);
-            } else if (prevScore > cur.score) {
-                cur.score = prevScore;
-                cur.pci = pci;
-            }
-            gapPreds.push({ endTgi: e, gapVal: prevScore - sc.gapPenalty * e, pci });
-        }
-        gapPreds.sort((a, b) => a.endTgi - b.endTgi);
-
-        let gapScanPos = -1;
-        let gapBestVal = -Infinity;
-        let gapBestPci = -1;
+        const prevDP = dp[qi - 1];
+        const currStates: DPState[][] = [];
 
         for (let ci = 0; ci < currCandidates.length; ci++) {
             const c = currCandidates[ci];
             const s = c.startTgi;
             const posScore = candidatePositionScore(c, target, sc);
-            const intraBonus = intraRunBonus(c.internalRunLen, sc.consecutive);
+            const standaloneBonus = candStandaloneBonus(c, sc.consecutive);
+            const trailing = candTrailingL(c);
+            const connected = c.internalRunLen === c.indices.length;
+            const L = c.internalRunLen;
 
-            // gap path: prev.endTgi <= s-2 인 prev들 중 gapVal 최대값
-            const gapThreshold = s - 2;
-            while (gapScanPos + 1 < gapPreds.length && gapPreds[gapScanPos + 1].endTgi <= gapThreshold) {
-                gapScanPos++;
-                if (gapPreds[gapScanPos].gapVal > gapBestVal) {
-                    gapBestVal = gapPreds[gapScanPos].gapVal;
-                    gapBestPci = gapPreds[gapScanPos].pci;
+            const byRunLen = new Map<number, DPState>();
+            const consider = (score: number, runLen: number, parentPci: number, parentRunLen: number) => {
+                const cur = byRunLen.get(runLen);
+                if (cur === undefined || score > cur.score) {
+                    byRunLen.set(runLen, { score, parentPci, parentRunLen, runLen });
+                }
+            };
+
+            // gap 경로 (prev.endTgi <= s - 2): prev runLen과 무관하게 결과 runLen = trailing.
+            // prev의 어느 상태가 최선인지 score 기준으로 모든 pci/runLen 스캔.
+            let bestGapScore = -Infinity;
+            let bestGapPci = -1;
+            let bestGapParentRunLen = -1;
+            for (let pci = 0; pci < prevCands.length; pci++) {
+                const prevEnd = prevCands[pci].endTgi;
+                if (prevEnd > s - 2) continue;
+                const gapDist = s - 1 - prevEnd;
+                const prevStatesList = prevDP[pci];
+                for (let psi = 0; psi < prevStatesList.length; psi++) {
+                    const ps = prevStatesList[psi];
+                    if (ps.score === -Infinity) continue;
+                    const cand = ps.score + sc.gapPenalty * gapDist;
+                    if (cand > bestGapScore) {
+                        bestGapScore = cand;
+                        bestGapPci = pci;
+                        bestGapParentRunLen = ps.runLen;
+                    }
+                }
+            }
+            if (bestGapScore !== -Infinity) {
+                consider(bestGapScore + posScore + standaloneBonus, trailing, bestGapPci, bestGapParentRunLen);
+            }
+
+            // cons 경로 (prev.endTgi == s - 1): prev의 runLen별로 결과 runLen/delta가 다름.
+            // connected: newRunLen = R + L, delta = L × (2R + L - 2) × cons
+            // spill:     newRunLen = 1, delta = (2R - 1) × cons (prev run이 R+1로 닫히고 trailing 고립)
+            for (let pci = 0; pci < prevCands.length; pci++) {
+                if (prevCands[pci].endTgi !== s - 1) continue;
+                const prevStatesList = prevDP[pci];
+                for (let psi = 0; psi < prevStatesList.length; psi++) {
+                    const ps = prevStatesList[psi];
+                    if (ps.score === -Infinity) continue;
+                    const R = ps.runLen;
+                    let delta: number;
+                    let newRunLen: number;
+                    if (connected) {
+                        delta = L * (2 * R + L - 2) * sc.consecutive;
+                        newRunLen = R + L;
+                    } else {
+                        delta = (2 * R - 1) * sc.consecutive;
+                        newRunLen = 1;
+                    }
+                    consider(ps.score + posScore + delta, newRunLen, pci, R);
                 }
             }
 
-            let bestScore = -Infinity;
-            let bestPci = -1;
-
-            if (gapBestVal > -Infinity) {
-                const cand = gapBestVal + sc.gapPenalty * (s - 1) + posScore + intraBonus;
-                if (cand > bestScore) {
-                    bestScore = cand;
-                    bestPci = gapBestPci;
-                }
+            if (byRunLen.size === 0) {
+                currStates.push([{ score: -Infinity, parentPci: -1, parentRunLen: -1, runLen: trailing }]);
+            } else {
+                currStates.push(Array.from(byRunLen.values()));
             }
-
-            // cons path: prev.endTgi == s-1 인 prev들 중 best score + bridgeBonus
-            const consPred = bestByEnd[s - 1];
-            if (consPred !== undefined) {
-                const cand = consPred.score + sc.consecutive + intraBonus + posScore;
-                if (cand > bestScore) {
-                    bestScore = cand;
-                    bestPci = consPred.pci;
-                }
-            }
-
-            currStates.push({ score: bestScore, parentPci: bestPci });
         }
 
         dp.push(currStates);
-
-        // bestByEnd 재사용 위해 사용한 슬롯만 비움
-        for (let k = 0; k < consUsed.length; k++) {
-            bestByEnd[consUsed[k]] = undefined;
-        }
     }
 
-    // Phase 3: 최적 종점
+    // Phase 3: 최적 종점 — 마지막 qi의 모든 (ci, state) 중 max score.
     let bestFinalScore = -Infinity;
     let bestFinalCi = -1;
+    let bestFinalRunLen = -1;
     const lastStates = dp[Q - 1];
     for (let ci = 0; ci < lastStates.length; ci++) {
-        const s = lastStates[ci].score;
-        if (s > bestFinalScore) {
-            bestFinalScore = s;
-            bestFinalCi = ci;
+        const states = lastStates[ci];
+        for (let si = 0; si < states.length; si++) {
+            const st = states[si];
+            if (st.score > bestFinalScore) {
+                bestFinalScore = st.score;
+                bestFinalCi = ci;
+                bestFinalRunLen = st.runLen;
+            }
         }
     }
 
     if (bestFinalCi === -1 || bestFinalScore === -Infinity) return null;
 
-    // Phase 4: 백트래킹
+    // Phase 4: 백트래킹 — (ci, runLen) 쌍으로 parent 체인 추적
     const chosenCi = new Array<number>(Q);
+    const chosenRunLen = new Array<number>(Q);
     chosenCi[Q - 1] = bestFinalCi;
+    chosenRunLen[Q - 1] = bestFinalRunLen;
     for (let qi = Q - 1; qi > 0; qi--) {
-        chosenCi[qi - 1] = dp[qi][chosenCi[qi]].parentPci;
+        const states = dp[qi][chosenCi[qi]];
+        let state: DPState | undefined;
+        for (let si = 0; si < states.length; si++) {
+            if (states[si].runLen === chosenRunLen[qi]) {
+                state = states[si];
+                break;
+            }
+        }
+        if (state === undefined) return null;
+        chosenCi[qi - 1] = state.parentPci;
+        chosenRunLen[qi - 1] = state.parentRunLen;
     }
 
     const allIndices: number[] = [];

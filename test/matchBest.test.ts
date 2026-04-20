@@ -264,6 +264,19 @@ describe("matchBest", () => {
             })!;
             expect(r.indices).toEqual([5, 6, 7, 8, 9]);
         });
+
+        it("4-run이 pos0+boundary 2+2보다 우위 (외화-장외 vs 은행재원)", () => {
+            // 쿼리 "ㅇㅎㅈㅇ"
+            // t1: "외화 및 장외..." — [0,1,5,6] 2+2 run (pos0 + 2 boundary)
+            // t2: "제1목 은행재원 ..." — [4,5,6,7] 4-run (1 boundary)
+            // 선형 cons에서는 t1이 이기지만(301 vs 280), 제곱화 cons에서는 4-run이 확실히 우위여야 한다.
+            const q = buildQuery("ㅇㅎㅈㅇ");
+            const t1 = preprocessTarget("외화 및 장외파생상품 신용리스크관리지침");
+            const t2 = preprocessTarget("제1목 은행재원 협약보증 주택전세자금대출");
+            const r1 = matchBest(q, t1)!;
+            const r2 = matchBest(q, t2)!;
+            expect(r2.score!).toBeGreaterThan(r1.score!);
+        });
     });
 
     describe("ScoringConfig 오버라이드", () => {

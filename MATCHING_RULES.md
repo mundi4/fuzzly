@@ -189,14 +189,16 @@ ASCII, 이모지 등 non-Hangul은 기본적으로 exact atom match다.
 
 단어 경계(공백, 언더스코어, 하이픈, 점 뒤)에서 매치된 grapheme 각각에 고정 보너스를 더한다.
 
-### 4.4 consecutive (선형)
+### 4.4 consecutive (제곱)
 
-최종 indices에서 인접한 tgi 쌍의 개수 × 가중치.
+최종 indices를 maximal consecutive run으로 분해하여 각 run 길이 L에 대해 `(L-1)² × 가중치`를 가산한다.
 
-- `[0,1,2]` → 2 쌍 × cons
-- `[0,2,3]` → 1 쌍 × cons
-- `[0,1,3]` → 1 쌍 × cons
+- `[0,1,2,3]` → 1개 run (L=4), (4-1)² = 9 × cons
+- `[0,1,2]` → 1개 run (L=3), (3-1)² = 4 × cons
+- `[0,1,3,4]` → 2개 run (L=2, L=2), 1+1 = 2 × cons
+- `[0,2,4]` → 3개 run (L=1 각각), 0 × cons
 
+제곱 스케일이라 긴 run이 비선형 우대된다. anchorFill의 Σ(atoms²) 철학과 대칭.
 tgi 인접은 **anchor grapheme 단위**다. anchor 내부의 atom 연속성은 anchorFill이 담당한다.
 
 ### 4.5 gap / lengthPenalty (선형)

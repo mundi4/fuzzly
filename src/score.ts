@@ -22,7 +22,11 @@ export const SCORING = {
     POSITION_ZERO: 30,
     /** 단어 경계 매치당 보너스 */
     BOUNDARY: 20,
-    /** 최종 indices의 인접 tgi 쌍 한 쌍당 보너스 */
+    /**
+     * 각 maximal consecutive run에 대해 (runLen - 1)² 을 곱해 가산되는 가중치.
+     * 제곱이라 긴 run을 비선형 우대 (L=4 → 9, L=3 → 4, L=2 → 1).
+     * anchorFill의 Σ(atoms²) 철학과 대칭.
+     */
     CONSECUTIVE: 20,
     /** gap 거리(tgi)당 페널티 */
     GAP_PENALTY: -3,

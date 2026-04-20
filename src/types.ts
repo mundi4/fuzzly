@@ -175,14 +175,14 @@ export type ScoringWeights = {
      * - 2+1로 spill(분산) = `anchorFill × (4+1) = 5`
      * - 1+1+1로 완전 분산(초성-only) = `anchorFill × 3`
      *
-    * 한 anchor에 몰릴수록 비선형으로 보상되어 anchorFill 항 기준으로 완전 매치가 유리해진다.
+     * 한 anchor에 몰릴수록 비선형으로 보상되어 anchorFill 항 기준으로 완전 매치가 유리해진다.
      */
     anchorFill?: number;
     /** 첫 매치가 target index 0에서 시작할 때의 보너스 */
     positionZero?: number;
     /** 단어 경계 매치 하나당 보너스 */
     boundary?: number;
-    /** 최종 indices에서 인접 tgi 쌍 한 쌍당 보너스 (선형) */
+    /** 각 maximal consecutive run 길이 L에 대해 (L-1)² 을 곱해 가산 (제곱) */
     consecutive?: number;
     /** gap 거리에 비례하는 페널티 (음수) */
     gapPenalty?: number;

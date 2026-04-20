@@ -101,7 +101,7 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 | **anchorFill** | Σ (각 target anchor에 떨어진 atom 수)² × 가중치. 한 anchor에 atom이 몰릴수록 비선형 보상. 같은 다른 조건이면 완전 매치 쪽이 유리해지는 주축 |
 | **positionZero** | 첫 매치가 target index 0에서 시작 시 고정 보너스 |
 | **boundary** | 단어 경계 매치당 고정 보너스 |
-| **consecutive** | 최종 indices의 인접 tgi 쌍 개수 × 가중치 (선형) |
+| **consecutive** | 각 maximal consecutive run 길이 L에 대해 Σ (L-1)² × 가중치 (제곱) |
 | **gapPenalty / targetLengthPenalty** | gap 거리 / target 길이 × 페널티 (선형, cap 없음) |
 | **graphemeBonus** | 매치된 atom마다 해당 atom이 속한 grapheme의 bonus 가산 (per-atom). spill 포함 |
 
