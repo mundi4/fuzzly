@@ -345,16 +345,18 @@ function intraRunBonus(internalRunLen: number, consecutive: number): number {
 }
 
 function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScoring): number {
+    // anchorFill: 각 target anchor에 떨어진 atom 수의 제곱 합 × 가중치.
+    // 제곱이라 같은 anchor에 atom이 몰릴수록 비선형 보상 — 완전 매치(한 anchor에 full) >
+    // 분산 매치(여러 anchor에 1개씩 spill). 예: 3 atoms가 한 anchor = 9, spill로 2+1 = 5.
     let s = 0;
     for (let i = 0; i < c.indices.length; i++) {
         const tgi = c.indices[i];
+        const filled = c.filledAtoms[i];
+        s += sc.anchorFill * filled * filled;
         if (tgi === 0) s += sc.positionZero;
         if (target.boundaryFlags[tgi]) s += sc.boundary;
-        s += sc.getBonus(tgi);
-        const anchorLen = target.atomLens[tgi];
-        if (anchorLen > 0) {
-            s += sc.anchorFill * (c.filledAtoms[i] / anchorLen);
-        }
+        // graphemeBonus는 해당 grapheme에서 매치된 atom 수만큼 누적 (per-atom).
+        s += sc.getBonus(tgi) * filled;
     }
     return s;
 }

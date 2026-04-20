@@ -152,22 +152,29 @@ export type MatchRange = {
 /**
  * 스코어링 가중치.
  *
- * 스코어는 가산형 5축 합으로 계산된다:
- * - `anchorFill` × (anchor 내부에서 소비된 atom 비율) — 완전 그래핌 매치 유도의 주축
+ * 스코어는 가산형 축들의 합으로 계산된다:
+ * - `anchorFill` × Σ (각 target anchor에 떨어진 atom 수)² — 완전 그래핌 매치 유도의 주축.
+ *   제곱이라 한 anchor에 atom이 몰릴수록 비선형 보상.
  * - `positionZero` (첫 grapheme이 target index 0)
  * - `boundary` × (단어 경계 매치 수)
  * - `consecutive` × (indices 내 인접 tgi 쌍 수)
  * - `gapPenalty` × (gap 거리) + `targetLengthPenalty` × T
- * - per-grapheme `graphemeBonus` (ScoringConfig)
+ * - per-atom `graphemeBonus`: 매치된 각 atom마다 해당 atom이 속한 grapheme의 bonus가 누적된다
  *
- * 초성-only 쿼리, tail spill, IME 축약 복원 등은 별도 축 없이
- * **anchorFill 비율이 낮아지는 자연스러운 감점**으로 후순위가 된다.
+ * 초성-only 쿼리, tail spill, IME 축약 복원 등은 atom들이 여러 anchor에 1개씩 분산되어
+ * **Σ(atoms²)가 작아지는 자연스러운 감점**으로 후순위가 된다.
  */
 export type ScoringWeights = {
     /**
-     * anchor(target) grapheme 내부에서 쿼리가 소비한 atom 비율에 곱해지는 가중치.
-     * 완전 매치(ratio=1.0) 대비 얇은 매치(초성-only ratio=1/3 등)가 후순위가 되도록
-     * 다른 축보다 지배적인 값을 기본으로 설정한다.
+     * 각 target anchor에 떨어진 atom 수의 **제곱**에 곱해지는 가중치.
+     * candidate 전체에서 `Σ over anchors (atoms_in_anchor)² × anchorFill`로 기여.
+     *
+     * 예:
+     * - 3 atoms이 한 anchor에 전부(완전 매치) = `anchorFill × 9`
+     * - 2+1로 spill(분산) = `anchorFill × (4+1) = 5`
+     * - 1+1+1로 완전 분산(초성-only) = `anchorFill × 3`
+     *
+     * 한 anchor에 몰릴수록 비선형으로 보상되어 완전 매치가 지배적 우위를 갖는다.
      */
     anchorFill?: number;
     /** 첫 매치가 target index 0에서 시작할 때의 보너스 */
@@ -184,6 +191,16 @@ export type ScoringWeights = {
 
 export type ScoringConfig = {
     weights?: ScoringWeights;
+    /**
+     * per-grapheme 추가 보너스. 배열 또는 `(graphemeIndex, target) => number` 함수.
+     *
+     * **per-atom 가산**: 매치된 각 atom마다 해당 atom이 속한 target grapheme의 bonus가 한 번씩 더해진다.
+     * 즉 한 anchor에서 N개 atom이 매치되면 `N × bonus[anchorTgi]`가 가산된다.
+     * spill 인덱스도 거기서 소비된 atom 수만큼 해당 grapheme의 bonus를 받는다.
+     *
+     * 완전 매치(atoms 많음)가 얇은 매치(atoms 적음)보다 자연스럽게 더 많은 bonus를 얻도록 하기 위함이며,
+     * indices 수가 아닌 atom 수에 비례하므로 분산 매치가 bonus 가산만으로 이득을 보지 않는다.
+     */
     graphemeBonus?: number[] | ((graphemeIndex: number, target: Target) => number);
 };
 
