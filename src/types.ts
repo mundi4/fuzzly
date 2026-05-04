@@ -41,10 +41,13 @@ export interface QueryGrapheme {
 /**
  * 쿼리 공백 처리 정책.
  *
- * - `"literal"` (기본): 공백을 일반 atom으로 취급. `"ab cd"`는 target에 literal 공백이 있어야 매치
- * - `"ignore"`: 쿼리에서 공백 grapheme을 제거 후 매칭. `"ab cd"` ≡ `"abcd"` (VSCode 파일 검색 스타일)
+ * - `"preserve"`: 공백을 일반 atom으로 취급. `"ab cd"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일)
+ * - `"ignore"` (기본): 쿼리에서 공백 grapheme을 제거 후 매칭. `"ab cd"` ≡ `"abcd"` (VSCode 파일 검색 스타일)
+ * - `"split"`: 공백 boundary로 sub-query를 분리한 뒤 순서 무관 AND. 모든 sub-query가 매치되어야 hit.
+ *   동일 토큰 또는 다른 토큰의 atom-prefix인 토큰은 redundant로 제거된다 (`"안녕 안"` → `["안녕"]`).
+ *   각 sub-query의 best match를 독립적으로 산출하고 indices는 union, score/메타는 Σ 단순합.
  */
-export type WhitespaceMode = "literal" | "ignore";
+export type WhitespaceMode = "preserve" | "ignore" | "split";
 
 /**
  * `buildQuery`의 출력. 사용자 입력을 grapheme 단위로 분해한 결과.
@@ -53,16 +56,28 @@ export type WhitespaceMode = "literal" | "ignore";
 export interface Query {
     /** 원본 입력 문자열 */
     input: string;
-    /** grapheme별 분해 정보 배열. `whitespace: "ignore"`면 공백 grapheme은 제외됨 */
+    /**
+     * grapheme별 분해 정보 배열. `whitespace: "ignore"`면 공백 grapheme은 제외됨.
+     * `whitespace: "split"` 모드의 outer Query는 빈 배열이며 매칭은 `subQueries`로 위임된다.
+     */
     graphemes: QueryGrapheme[];
     /**
      * 모든 grapheme의 atoms를 연결한 문자열.
      * IME 입력 중 이전 쿼리의 atom prefix인지 판별하는 데 사용된다
      * (createSearcher의 세션 최적화).
+     *
+     * `whitespace: "split"` 모드의 outer Query에서는 빈 문자열로 두어
+     * 세션 prefix reuse가 자동으로 비활성화된다.
      */
     atoms: string;
     /** 이 Query가 빌드된 공백 처리 모드 */
     whitespace: WhitespaceMode;
+    /**
+     * `whitespace: "split"` 모드일 때만 채워진다. 공백 boundary로 분리된 각 토큰을
+     * 독립 sub-Query로 빌드한 결과. 매칭은 `matchBest`가 모든 sub-query를 AND로 평가한다.
+     * non-split 모드에서는 `undefined`.
+     */
+    subQueries?: Query[];
 }
 
 /**
@@ -224,8 +239,8 @@ export type SearchOptions = {
      */
     strict?: boolean;
     /**
-     * 쿼리 공백 처리 정책. 기본값: `"literal"`.
-     * `"ignore"`로 지정하면 쿼리에서 공백 grapheme을 제거 후 매칭.
+     * 쿼리 공백 처리 정책. 기본값: `"ignore"`.
+     * `"preserve"`로 지정하면 공백을 일반 atom으로 취급, `"split"`은 공백 boundary로 분리해 순서 무관 AND.
      * @see {@link WhitespaceMode}
      */
     whitespace?: WhitespaceMode;

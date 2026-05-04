@@ -292,7 +292,7 @@ describe("createSearcher", () => {
 
         it("literal 모드 연속에서 whitespace 토글도 세션 단절 안 시킴", () => {
             const searcher = createSearcher(["abc", "xyz"]);
-            const r1 = searcher.search("ab", { literal: true, whitespace: "literal" });
+            const r1 = searcher.search("ab", { literal: true, whitespace: "preserve" });
             expect(r1.map((x) => x.item)).toEqual(["abc"]);
 
             const r2 = searcher.search("abc", { literal: true, whitespace: "ignore" });

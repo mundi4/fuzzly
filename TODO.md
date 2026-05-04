@@ -33,16 +33,18 @@
 - 위 `rankBy`/`scoreFn` 결정과 일관된 네이밍 규칙 채택
 - `README`/`CLAUDE.md` 예제 전체 동기화
 
-### [ ] WhitespaceMode 값 리네임 + 기본값 변경
-- `WhitespaceMode`: `"literal" | "ignore"` → `"preserve" | "ignore"`
-  - 근거: `SearchOptions.literal`(substring 모드 플래그, 유지)과 이름 충돌
-    제거. `preserve`/`ignore` 쌍이 행위 대칭적("공백을 남긴다/버린다")
-- 기본값 `"literal"` → `"ignore"`로 변경 (퍼지 검색 UX 상 "ab cd" ≡ "abcd"가
-  기대 동작). 기존 VSCode 커맨드 스타일이 필요하면 명시적으로 `"preserve"`
-  지정
-- 영향 파일: `src/types.ts`, `src/buildQuery.ts`(default 처리),
-  `src/createSearcher.ts`(세션 비교 값), `CLAUDE.md`, 테스트 전반
+### [x] WhitespaceMode 값 리네임 + 기본값 변경 + `"split"` 추가
+- `WhitespaceMode`: `"literal" | "ignore"` → `"preserve" | "ignore" | "split"`
+  - `"literal"` → `"preserve"` (이름 충돌 제거, 행위 대칭 `preserve`/`ignore`)
+  - `"split"` 추가: 공백 boundary로 sub-query 분리 후 순서 무관 AND
+    (atom-prefix dedup 포함 — `"a ab"` → `["ab"]`)
+- 기본값 `"literal"` → `"ignore"`로 변경
 - `SearchOptions.literal`(substring 플래그)은 **그대로 유지**
+
+### [ ] split 모드 토큰별 prefix 캐시 reuse
+현재 `whitespace: "split"` 모드는 outer Query의 `atoms` 가 빈 문자열이라
+세션 prefix reuse가 자동으로 비활성된다. 토큰 단위 캐시 (각 sub-query의
+이전 매치 인덱스 reuse) 는 별도 PR — sub-query 동치성 / 순서 정의가 필요.
 
 ### [ ] caller API에서 낯선 용어/내부 개념 노출 최소화
 caller는 원문 char index(UTF-16 offset)와 score/hit 여부만 알면 충분하다.

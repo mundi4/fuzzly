@@ -99,7 +99,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const limit = searchOpts.limit ?? 0;
             const scoringOpt = searchOpts.scoring;
             const strict = searchOpts.strict ?? false;
-            const whitespace: WhitespaceMode = searchOpts.whitespace ?? "literal";
+            const whitespace: WhitespaceMode = searchOpts.whitespace ?? "ignore";
             const resolveScoringConfig =
                 typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
 

@@ -389,6 +389,10 @@ function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScorin
  * (anchor에 atom이 얇게 분산된 매치는 `anchorFill`의 Σ(atoms²) 기여가 작고,
  * graphemeBonus도 per-atom 기준으로 덜 누적되어 자연스럽게 후순위).
  *
+ * **split 모드**: `query.subQueries`가 채워져 있으면 각 sub-query를 독립적으로 매칭한 뒤
+ * 모두 hit인 경우만 결과를 합성한다 (`indices`는 union sort dedup, score/메타는 Σ 단순합).
+ * 하나라도 매치 실패면 `null`.
+ *
  * @param query - `buildQuery`로 만든 쿼리
  * @param target - `preprocessTarget`으로 만든 타겟
  * @param scoring - 스코어 가중치 / grapheme 보너스
@@ -401,6 +405,10 @@ export function matchBest(
     scoring?: ScoringConfig,
     strict: boolean = false,
 ): MatchResult | null {
+    if (query.subQueries) {
+        return matchBestSplit(query.subQueries, target, scoring, strict);
+    }
+
     const qGraphemes = query.graphemes;
     const T = target.graphemeCount;
     const Q = qGraphemes.length;
@@ -588,4 +596,66 @@ export function matchBest(
     const result = buildMatchResult(indices, target);
     result.score = score;
     return result;
+}
+
+/**
+ * `whitespace: "split"` 모드의 매칭 디스패처.
+ *
+ * 각 sub-query를 독립적으로 `matchBest`로 매칭한다. 하나라도 매치 실패면 전체 `null`.
+ * 모두 hit인 경우 결과를 합성한다:
+ * - `score`, `boundaryHits`, `runCount`: Σ 단순합 (각 sub의 best DP 결과를 더함)
+ * - `startsAtZero`: OR (어느 sub라도 0에서 시작하면 true)
+ * - `indices`: 모든 sub의 indices를 union sort dedup (caller의 ranges 산출용)
+ *
+ * 메타필드를 union 기반으로 재계산하지 않는 이유: score 정의가 "각 sub best의 합"인데
+ * union은 cross-sub joint best와 다를 수 있어 메타만 union 기준으로 잡으면 score와 철학이 어긋난다.
+ * 대신 buildQuery에서 atom-prefix dedup으로 의도 없는 중복 입력의 부풀림을 자동 차단한다.
+ */
+function matchBestSplit(
+    subQueries: Query[],
+    target: Target,
+    scoring: ScoringConfig | undefined,
+    strict: boolean,
+): MatchResult | null {
+    if (subQueries.length === 0) {
+        return {
+            indices: [],
+            startsAtZero: false,
+            runCount: 0,
+            boundaryHits: 0,
+            score: 0,
+        };
+    }
+
+    let totalScore = 0;
+    let totalBoundaryHits = 0;
+    let totalRunCount = 0;
+    let anyStartsAtZero = false;
+    const allIndices: number[] = [];
+
+    for (const sub of subQueries) {
+        const r = matchBest(sub, target, scoring, strict);
+        if (r === null) return null;
+        totalScore += r.score ?? 0;
+        totalBoundaryHits += r.boundaryHits;
+        totalRunCount += r.runCount;
+        if (r.startsAtZero) anyStartsAtZero = true;
+        for (const i of r.indices) allIndices.push(i);
+    }
+
+    allIndices.sort((a, b) => a - b);
+    const indices: number[] = [];
+    for (const i of allIndices) {
+        if (indices.length === 0 || indices[indices.length - 1] !== i) {
+            indices.push(i);
+        }
+    }
+
+    return {
+        indices,
+        startsAtZero: anyStartsAtZero,
+        runCount: totalRunCount,
+        boundaryHits: totalBoundaryHits,
+        score: totalScore,
+    };
 }

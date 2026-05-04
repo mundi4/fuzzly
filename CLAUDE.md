@@ -88,10 +88,15 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 **`WhitespaceMode`** (`SearchOptions.whitespace`, `buildQuery` 2번째 인자 `{ whitespace }`):
 | 값 | 동작 |
 |---|---|
-| `"literal"` (**기본값**) | 공백을 일반 atom으로 취급. `"a b"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일) |
-| `"ignore"` | 쿼리에서 공백 grapheme을 제거 후 매칭. `"a b"` ≡ `"ab"` (VSCode 파일 검색 스타일) |
+| `"preserve"` | 공백을 일반 atom으로 취급. `"a b"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일) |
+| `"ignore"` (**기본값**) | 쿼리에서 공백 grapheme을 제거 후 매칭. `"a b"` ≡ `"ab"` (VSCode 파일 검색 스타일) |
+| `"split"` | 공백 boundary로 sub-query 분리 → 순서 무관 AND. 모든 sub가 hit이어야 매치. `"제목 멋진"` ≡ `"멋진 제목"` |
 
-`ignore` 모드는 `buildQuery`에서 공백 grapheme을 drop하는 전처리만 수행. `matchBest` 알고리즘은 변경 없음. `matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
+`ignore` 모드는 `buildQuery`에서 공백 grapheme을 drop하는 전처리만 수행. `matchBest` 알고리즘은 변경 없음.
+
+`split` 모드는 `/\s+/` boundary로 토큰화 후 각 토큰을 `'ignore'` sub-Query로 빌드한다. **atom-prefix dedup**: AND 조건이라 다른 토큰의 atom-prefix인 토큰은 redundant — 짧은 쪽 제거 (`"a ab"` → `["ab"]`, `"안녕 안"` → `["안녕"]`). `matchBest`는 각 sub-query를 독립 매칭 후 합성: `indices`는 union sort dedup, `score`/`boundaryHits`/`runCount`는 Σ 단순합, `startsAtZero`는 OR. 하나라도 매치 실패면 전체 `null`.
+
+`matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
 
 ### Scoring (5축 가산 합)
 

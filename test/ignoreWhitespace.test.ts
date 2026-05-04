@@ -9,10 +9,10 @@ describe("ignore 모드 - buildQuery", () => {
     });
 
     it("atoms 문자열에 공백 atom이 포함되지 않는다", () => {
-        const literal = buildQuery("a b");
+        const preserve = buildQuery("a b", { whitespace: "preserve" });
         const ignore = buildQuery("a b", { whitespace: "ignore" });
-        const ab = buildQuery("ab");
-        expect(literal.atoms).not.toBe(ab.atoms);
+        const ab = buildQuery("ab", { whitespace: "ignore" });
+        expect(preserve.atoms).not.toBe(ab.atoms);
         expect(ignore.atoms).toBe(ab.atoms);
     });
 
@@ -34,11 +34,11 @@ describe("ignore 모드 - buildQuery", () => {
         expect(q.input).toBe("a b");
     });
 
-    it("whitespace 필드 기본값은 literal", () => {
+    it("whitespace 필드 기본값은 ignore", () => {
         const def = buildQuery("ab");
-        expect(def.whitespace).toBe("literal");
-        const lit = buildQuery("ab", { whitespace: "literal" });
-        expect(lit.whitespace).toBe("literal");
+        expect(def.whitespace).toBe("ignore");
+        const pre = buildQuery("ab", { whitespace: "preserve" });
+        expect(pre.whitespace).toBe("preserve");
         const ig = buildQuery("ab", { whitespace: "ignore" });
         expect(ig.whitespace).toBe("ignore");
     });
@@ -66,11 +66,11 @@ describe("ignore 모드 - 매칭 동작", () => {
         expect(r?.indices).toEqual([0, 1, 2, 4, 5, 6]);
     });
 
-    it("literal과 ignore 비교: target에 공백 없는 케이스", () => {
+    it("preserve와 ignore 비교: target에 공백 없는 케이스", () => {
         const t = preprocessTarget("ab");
-        const lit = buildQuery("a b");
+        const pre = buildQuery("a b", { whitespace: "preserve" });
         const ig = buildQuery("a b", { whitespace: "ignore" });
-        expect(matchBest(lit, t)).toBeNull();
+        expect(matchBest(pre, t)).toBeNull();
         expect(matchBest(ig, t)).not.toBeNull();
     });
 
@@ -104,23 +104,23 @@ describe("ignore 모드 - createSearcher 세션", () => {
         expect(r3.map((x) => x.item).sort()).toEqual(["abcdef", "abczdef"]);
     });
 
-    it("모드 전환 시 세션 reset (literal → ignore)", () => {
+    it("모드 전환 시 세션 reset (preserve → ignore)", () => {
         const searcher = createSearcher(["ab", "a b"]);
 
-        const r1 = searcher.search("a b");
+        const r1 = searcher.search("a b", { whitespace: "preserve" });
         expect(r1.map((x) => x.item)).toEqual(["a b"]);
 
         const r2 = searcher.search("a b", { whitespace: "ignore" });
         expect(r2.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
     });
 
-    it("모드 전환 ignore → literal", () => {
+    it("모드 전환 ignore → preserve", () => {
         const searcher = createSearcher(["ab", "a b"]);
 
         const r1 = searcher.search("a b", { whitespace: "ignore" });
         expect(r1.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
 
-        const r2 = searcher.search("a b");
+        const r2 = searcher.search("a b", { whitespace: "preserve" });
         expect(r2.map((x) => x.item)).toEqual(["a b"]);
     });
 });
