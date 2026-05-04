@@ -2,20 +2,16 @@
 
 ## API 재설계
 
-### [ ] SearchOptions → SearcherOptions 이관
-`scoring`, `score`, `spillMode`, `whitespace`를 `createSearcher`에 넘기도록
-이동. 세션 연속성에 영향을 주는 값이므로 call-site가 아니라 searcher 생성
-시점에 고정하는 것이 맞다. 변경 시엔 새 searcher를 만든다.
+### [x] SearchOptions → SearcherOptions 이관
+`scoring`, `score`, `whitespace`, `strict` 를 `createSearcher` 시점 고정으로
+이동. `SearchResultOptions` (`{ limit?, literal? }`) 만 per-call 로 남김.
+`SearchOptions` 는 `SearchResultOptions` alias 로 deprecate.
 
-- `SearcherOptions<T>`에 `scoring`, `score`, `spillMode`, `whitespace` 추가
-- `createSearcher` 내부 세션 리셋 로직에서 해당 필드 비교 제거
-- `SearchOptions`는 `{ limit?, literal?, composingIndex? }`로 축소
-- 마이그레이션 노트: 기존 `searcher.search(q, { scoring })` 호출부
-  (`test/scoring.test.ts` 등) 재작성 필요
+- silent-ignore guard 추가 — 잘못된 위치 옵션 (per-call 키를 createSearcher 에,
+  정책 키를 search 에) 은 dev 모드에서 console.warn
 
-### [ ] literal을 search-time 인자로
-`literal`은 쿼리 해석 모드라 per-call이 자연스럽다. 위 축소된
-`SearchOptions` 안에 남긴다.
+### [x] literal을 search-time 인자로
+`SearchResultOptions` 에 남김. literal 모드 토글 시에만 세션 단절.
 
 ### [ ] composingIndex를 options 객체로 흡수
 현재 `search(query, options, composingIndex)` 3번째 positional 인자를

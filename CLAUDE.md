@@ -121,14 +121,22 @@ preprocessTarget(input) → Target
 matchBest(query, target, scoring?, strict?) → MatchResult | null (score 포함)
 matchLiteral(literal, target) → MatchResult | null
 buildMatchRanges(hitMaps[], target) → MatchRange[]
-createSearcher(items, opts?) → Searcher (session 최적화 내장)
-  searcher.search(queryInput, options?)
+createSearcher(items, opts?: SearcherOptions) → Searcher (session 최적화 내장)
+  searcher.search(queryInput, options?: SearchResultOptions)
 ```
+
+옵션 분리 (옵션 위치 = 의미):
+
+- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
+- `SearchResultOptions` (per-call): `limit`, `literal`. search 단위로만 의미 있는 옵션.
+- `SearchOptions` 는 `SearchResultOptions` 의 alias (deprecated).
+
+**Silent-ignore guard**: createSearcher 에 `limit`/`literal` 같은 per-call 키, 또는 search 에 `whitespace`/`strict`/`scoring`/`score` 같은 정책 키를 넘기면 dev 모드에서 `console.warn` (production 빌드는 스킵). 잘못된 위치 옵션의 silent ignore 차단.
 
 주요 타입:
 
-- `WhitespaceMode` = `"literal" | "ignore"` (기본 `"literal"`)
-- `SearchOptions.strict?: boolean` (기본 `false`)
+- `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`)
+- `SearcherOptions.strict?: boolean` (기본 `false`)
 
 ## Conventions
 

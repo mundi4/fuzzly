@@ -117,10 +117,10 @@ describe("createSearcher", () => {
 
     describe("스코어링", () => {
         it("score 콜백으로 정렬", () => {
-            const searcher = createSearcher(["안녕하세요", "안부 전합니다", "안심하세요"]);
-            const results = searcher.search("안", {
+            const searcher = createSearcher(["안녕하세요", "안부 전합니다", "안심하세요"], {
                 score: (result) => (result.startsAtZero ? 100 : 0) - result.runCount,
             });
+            const results = searcher.search("안");
 
             expect(results.length).toBeGreaterThan(0);
             // 모든 결과에 score가 있어야 함
@@ -166,11 +166,10 @@ describe("createSearcher", () => {
 
         it("score + limit: 정렬 후 자르기", () => {
             const items = ["z_a", "a_z", "m_a"];
-            const searcher = createSearcher(items);
-            const results = searcher.search("a", {
+            const searcher = createSearcher(items, {
                 score: (r) => (r.startsAtZero ? 100 : 0),
-                limit: 2,
             });
+            const results = searcher.search("a", { limit: 2 });
             expect(results).toHaveLength(2);
             // score 내림차순이므로 startsAtZero인 것이 먼저
             expect(results[0].item).toBe("a_z");
@@ -248,7 +247,7 @@ describe("createSearcher", () => {
         });
     });
 
-    describe("strict 옵션", () => {
+    describe("strict 옵션 (SearcherOptions)", () => {
         it("strict=false 기본: '으' → '은행나무' 매치됨 (관대)", () => {
             const searcher = createSearcher(["은행나무"]);
             const r = searcher.search("으");
@@ -256,18 +255,16 @@ describe("createSearcher", () => {
         });
 
         it("strict=true: '으' → '은행나무' 매치 안 됨 (엄격)", () => {
-            const searcher = createSearcher(["은행나무"]);
-            const r = searcher.search("으", { strict: true });
+            const searcher = createSearcher(["은행나무"], { strict: true });
+            const r = searcher.search("으");
             expect(r.map((x) => x.item)).not.toContain("은행나무");
         });
 
-        it("strict 변경 시 세션 단절되어 재탐색", () => {
-            const searcher = createSearcher(["은행나무"]);
-            const first = searcher.search("으", { strict: true });
-            expect(first.map((r) => r.item)).not.toContain("은행나무");
-
-            const second = searcher.search("으", { strict: false });
-            expect(second.map((r) => r.item)).toContain("은행나무");
+        it("strict 정책은 인스턴스 단위 — 별 searcher 로 비교", () => {
+            const lenient = createSearcher(["은행나무"], { strict: false });
+            const strict = createSearcher(["은행나무"], { strict: true });
+            expect(lenient.search("으").map((r) => r.item)).toContain("은행나무");
+            expect(strict.search("으").map((r) => r.item)).not.toContain("은행나무");
         });
 
         it("'막엲ㄱ' → '막연하게' 매치 (기본 관대 모드)", () => {
@@ -277,36 +274,63 @@ describe("createSearcher", () => {
         });
     });
 
-    describe("literal 모드 세션 키", () => {
-        it("literal 모드 연속에서 strict 토글은 세션 단절 안 시킴", () => {
-            // literal 경로는 strict를 무시하므로 토글에도 atoms prefix narrowing이 유지되어야 한다.
+    describe("literal 모드 세션 키 (per-call)", () => {
+        it("literal 모드 연속에서 atoms prefix narrowing 유지", () => {
             const searcher = createSearcher(["abcdef", "xyz"]);
-            const r1 = searcher.search("ab", { literal: true, strict: false });
+            const r1 = searcher.search("ab", { literal: true });
             expect(r1.map((x) => x.item)).toEqual(["abcdef"]);
 
-            // strict=true로 토글 + atoms prefix 확장. 세션 유지되어 prev 매치만 재스캔.
-            // narrowing: 결과는 단조 감소.
-            const r2 = searcher.search("abc", { literal: true, strict: true });
+            const r2 = searcher.search("abc", { literal: true });
             expect(r2.map((x) => x.item)).toEqual(["abcdef"]);
         });
 
-        it("literal 모드 연속에서 whitespace 토글도 세션 단절 안 시킴", () => {
-            const searcher = createSearcher(["abc", "xyz"]);
-            const r1 = searcher.search("ab", { literal: true, whitespace: "preserve" });
-            expect(r1.map((x) => x.item)).toEqual(["abc"]);
-
-            const r2 = searcher.search("abc", { literal: true, whitespace: "ignore" });
-            expect(r2.map((x) => x.item)).toEqual(["abc"]);
-        });
-
-        it("literal ↔ fuzzy 전환은 여전히 세션 단절", () => {
-            const searcher = createSearcher(["ab", "a b"]);
+        it("literal ↔ fuzzy 전환은 세션 단절", () => {
+            const searcher = createSearcher(["ab", "a b"], { whitespace: "ignore" });
             const r1 = searcher.search("a b", { literal: true });
             expect(r1.map((x) => x.item)).toEqual(["a b"]);
 
             // literal → fuzzy(whitespace=ignore): 둘 다 매치되어야 함 (전체 재스캔 확인)
-            const r2 = searcher.search("a b", { literal: false, whitespace: "ignore" });
+            const r2 = searcher.search("a b", { literal: false });
             expect(r2.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
+        });
+    });
+
+    describe("dev-mode silent ignore guard", () => {
+        const captureWarnings = (fn: () => void): string[] => {
+            const original = console.warn;
+            const warnings: string[] = [];
+            console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+            try {
+                fn();
+            } finally {
+                console.warn = original;
+            }
+            return warnings;
+        };
+
+        it("createSearcher 에 SearchResultOptions 키를 넘기면 경고", () => {
+            const warnings = captureWarnings(() => {
+                createSearcher(["a"], { limit: 5 } as never);
+            });
+            expect(warnings.some((w) => w.includes("'limit'"))).toBe(true);
+            expect(warnings.some((w) => w.includes("searcher.search"))).toBe(true);
+        });
+
+        it("searcher.search 에 SearcherOptions 키를 넘기면 경고", () => {
+            const searcher = createSearcher(["abc"]);
+            const warnings = captureWarnings(() => {
+                searcher.search("a", { whitespace: "split" } as never);
+            });
+            expect(warnings.some((w) => w.includes("'whitespace'"))).toBe(true);
+            expect(warnings.some((w) => w.includes("createSearcher"))).toBe(true);
+        });
+
+        it("올바른 위치에 옵션을 넘기면 경고 없음", () => {
+            const warnings = captureWarnings(() => {
+                const s = createSearcher(["abc"], { whitespace: "ignore", strict: false });
+                s.search("a", { limit: 2, literal: false });
+            });
+            expect(warnings).toEqual([]);
         });
     });
 });

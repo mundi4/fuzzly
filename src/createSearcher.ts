@@ -4,12 +4,12 @@ import { matchBest, matchLiteral } from "./match";
 import { preprocessTarget } from "./preprocessTarget";
 import type {
     MatchResult,
+    ScoringConfig,
     Searcher,
     SearcherOptions,
-    SearchOptions,
     SearchResult,
+    SearchResultOptions,
     Target,
-    WhitespaceMode,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -44,17 +44,55 @@ function heapReplace<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
 }
 
 // ---------------------------------------------------------------------------
+// dev-mode silent-ignore guard
+//
+// 옵션을 잘못된 위치에 넘기는 실수 (createSearcher 에 SearchResultOptions 키,
+// .search() 에 SearcherOptions 키) 를 silent ignore 하지 않고 console.warn 으로 시그널.
+// 첫 호출 시 한 번만 검사 후 캐시 (중복 경고 방지). 프로덕션 빌드는 NODE_ENV === "production" 면 스킵.
+// ---------------------------------------------------------------------------
+
+const SEARCHER_ONLY_KEYS = new Set(["key", "strict", "whitespace", "scoring", "score"]);
+const SEARCH_ONLY_KEYS = new Set(["limit", "literal"]);
+
+const isProd = (() => {
+    try {
+        // biome-ignore lint/complexity/useLiteralKeys: process 가 존재하지 않을 수 있으므로 동적 접근
+        return typeof process !== "undefined" && process.env && process.env["NODE_ENV"] === "production";
+    } catch {
+        return false;
+    }
+})();
+
+function warnUnknownKeys(opts: object | undefined, allowed: Set<string>, where: string): void {
+    if (isProd || opts == null) return;
+    for (const k of Object.keys(opts)) {
+        if (!allowed.has(k)) {
+            const hint = SEARCHER_ONLY_KEYS.has(k)
+                ? `pass it to createSearcher(items, options) instead`
+                : SEARCH_ONLY_KEYS.has(k)
+                  ? `pass it to searcher.search(query, options) instead`
+                  : `unknown option`;
+            // eslint-disable-next-line no-console
+            console.warn(`[fuzzly] ${where}: '${k}' is not a valid option — ${hint}.`);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * 검색 인스턴스를 생성한다. 아이템 목록을 내부에 보관하고
  * `search()` 호출마다 `matchBest`로 최적 매칭+스코어링을 수행한다.
  *
+ * **매칭 정책 옵션은 `SearcherOptions`에서 고정**된다 — `strict`, `whitespace`,
+ * `scoring`, `score`. 다른 정책이 필요하면 새 searcher 인스턴스를 만든다.
+ * `searcher.search()` 단계에는 per-call 옵션 (`limit`, `literal`) 만 받는다.
+ *
  * **IME 입력 세션 최적화**: 이전 쿼리의 atom prefix 확장이면
- * 이전에 매치된 아이템만 재검색하여 성능을 높인다.
- * `strict` / `whitespace` / `literal` 모드가 달라지면 세션이 자동 단절되어 전체 재탐색한다.
+ * 이전에 매치된 아이템만 재검색하여 성능을 높인다. `literal` 모드 토글 시 세션이 자동 단절된다.
  *
  * @param items - 검색 대상 아이템 목록
- * @param options - T가 string이 아니면 `key` 함수 필수
+ * @param options - 매칭 정책. T가 string이 아니면 `key` 함수 필수.
  * @returns add/remove/replaceAll로 아이템을 관리할 수 있는 Searcher 인스턴스
  */
 export function createSearcher<T>(
@@ -63,6 +101,8 @@ export function createSearcher<T>(
 ): Searcher<T>;
 export function createSearcher(items: readonly string[], options?: SearcherOptions<string>): Searcher<string>;
 export function createSearcher<T>(items: readonly T[], options: SearcherOptions<T> = {}): Searcher<T> {
+    warnUnknownKeys(options, SEARCHER_ONLY_KEYS, "createSearcher options");
+
     const key = (options as SearcherOptions<T> & { key?: (item: T) => string }).key;
     const keyFn: (item: T) => string =
         key ??
@@ -73,47 +113,43 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
             throw new TypeError("createSearcher requires options.key when items are not strings");
         });
+
+    const strict = options.strict ?? false;
+    const whitespace = options.whitespace ?? "ignore";
+    const scoringOpt = options.scoring;
+    const resolveScoringConfig: ((target: Target) => ScoringConfig) | undefined =
+        typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
+    const scoreFn = options.score;
+
     let entries: Array<{ item: T; target: Target }> = items.map((item) => ({
         item,
         target: preprocessTarget(keyFn(item)),
     }));
 
-    // 세션 상태: 이전 쿼리의 atom 시퀀스, 매칭 모드, 매치된 엔트리 인덱스 배열
+    // 세션 상태: 이전 쿼리의 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
+    // strict/whitespace 는 SearcherOptions 에서 고정되므로 세션 비교에서 제외.
     let prevAtoms = "";
     let prevLiteral = false;
-    let prevStrict: boolean | undefined;
-    let prevWhitespace: WhitespaceMode | undefined;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevAtoms = "";
         prevLiteral = false;
-        prevStrict = undefined;
-        prevWhitespace = undefined;
         prevMatchedIndices = null;
     }
 
     return {
-        search(queryInput: string, searchOpts: SearchOptions = {}): SearchResult<T>[] {
-            const scoreFn = searchOpts.score;
-            const limit = searchOpts.limit ?? 0;
-            const scoringOpt = searchOpts.scoring;
-            const strict = searchOpts.strict ?? false;
-            const whitespace: WhitespaceMode = searchOpts.whitespace ?? "ignore";
-            const resolveScoringConfig =
-                typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
+        search(queryInput: string, searchOpts: SearchResultOptions = {}): SearchResult<T>[] {
+            warnUnknownKeys(searchOpts, SEARCH_ONLY_KEYS, "searcher.search options");
 
-            // 세션 연속 판단을 위한 atom 시퀀스
-            const query = searchOpts.literal ? null : buildQuery(queryInput, { whitespace });
+            const limit = searchOpts.limit ?? 0;
+            const currentLiteral = !!searchOpts.literal;
+
+            const query = currentLiteral ? null : buildQuery(queryInput, { whitespace });
             const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
-            // 현재 atoms가 이전 atoms의 확장인가?
-            // 매칭 모드(literal/fuzzy)가 달라지면 세션 단절. fuzzy 모드에서는 strict/whitespace
-            // 변경도 단절 사유. literal 경로는 strict/whitespace를 무시하므로 비교에서 제외.
-            const currentLiteral = !!searchOpts.literal;
-            const flagsCompatible =
-                prevLiteral === currentLiteral &&
-                (currentLiteral || (prevStrict === strict && prevWhitespace === whitespace));
+            // literal 모드 토글 시 세션 단절. atoms prefix 확장이면 prev 매치만 재스캔.
+            const flagsCompatible = prevLiteral === currentLiteral;
             const sessionIndices =
                 prevAtoms.length > 0 &&
                 currentAtoms.length > prevAtoms.length &&
@@ -178,8 +214,6 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
             prevAtoms = currentAtoms;
             prevLiteral = currentLiteral;
-            prevStrict = strict;
-            prevWhitespace = whitespace;
             prevMatchedIndices = matchedIndices;
 
             return results;

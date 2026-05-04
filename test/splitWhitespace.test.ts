@@ -197,15 +197,17 @@ describe("split 모드 - 모드 격리", () => {
 
 describe("split 모드 - createSearcher 통합", () => {
     it("searcher.search 경유 split 매치", () => {
-        const searcher = createSearcher(["이것은 멋진 제목입니다", "다른 노트", "또 다른 멋진 글"]);
-        const r = searcher.search("제목 멋진", { whitespace: "split" });
+        const searcher = createSearcher(["이것은 멋진 제목입니다", "다른 노트", "또 다른 멋진 글"], {
+            whitespace: "split",
+        });
+        const r = searcher.search("제목 멋진");
         expect(r.length).toBe(1);
         expect(r[0].item).toBe("이것은 멋진 제목입니다");
     });
 
     it("ranges() 가 union sort dedup 으로 산출", () => {
-        const searcher = createSearcher(["이것은 멋진 제목입니다"]);
-        const r = searcher.search("제목 멋진", { whitespace: "split" });
+        const searcher = createSearcher(["이것은 멋진 제목입니다"], { whitespace: "split" });
+        const r = searcher.search("제목 멋진");
         expect(r.length).toBe(1);
         const ranges = r[0].ranges();
         // 두 토큰 매치 위치가 모두 포함, 정렬됨
@@ -215,13 +217,16 @@ describe("split 모드 - createSearcher 통합", () => {
         }
     });
 
-    it("세션 캐시 — split → ignore 전환 시 reset", () => {
-        const searcher = createSearcher(["멋진 제목", "다른 노트"]);
-        const r1 = searcher.search("제목 멋진", { whitespace: "split" });
-        expect(r1.map((x) => x.item)).toEqual(["멋진 제목"]);
+    it("split / ignore 별 인스턴스 — 결과 다름", () => {
+        const items = ["멋진 제목", "다른 노트"];
+        const splitSearcher = createSearcher(items, { whitespace: "split" });
+        const ignoreSearcher = createSearcher(items, { whitespace: "ignore" });
 
-        // ignore 모드로 전환 — '제목멋진' 합쳐 order-preserving → '멋진 제목' 에선 fail
-        const r2 = searcher.search("제목 멋진", { whitespace: "ignore" });
-        expect(r2.length).toBe(0);
+        const rSplit = splitSearcher.search("제목 멋진");
+        expect(rSplit.map((x) => x.item)).toEqual(["멋진 제목"]);
+
+        // ignore 모드 — '제목멋진' 합쳐 order-preserving → '멋진 제목' 에선 fail
+        const rIgnore = ignoreSearcher.search("제목 멋진");
+        expect(rIgnore.length).toBe(0);
     });
 });

@@ -222,9 +222,9 @@ describe("anchorFill regression - 완전 매치가 기본 가중치에서 우위
 
 describe("createSearcher - scoring option", () => {
     it("static ScoringConfig 전달", () => {
-        const searcher = createSearcher(["안녕하세요", "안부", "안심"]);
         const scoring: ScoringConfig = { weights: { positionZero: 500 } };
-        const results = searcher.search("안", { scoring });
+        const searcher = createSearcher(["안녕하세요", "안부", "안심"], { scoring });
+        const results = searcher.search("안");
         expect(results.length).toBeGreaterThan(0);
         for (const r of results) {
             expect(typeof r.score).toBe("number");
@@ -232,12 +232,12 @@ describe("createSearcher - scoring option", () => {
     });
 
     it("함수 형태 scoring: 타겟마다 다른 config", () => {
-        const searcher = createSearcher(["가나다라", "마바사아", "가마바사"]);
-        const results = searcher.search("가", {
+        const searcher = createSearcher(["가나다라", "마바사아", "가마바사"], {
             scoring: (target) => ({
                 graphemeBonus: (gi) => (target.graphemeCount <= 4 && gi === 0 ? 200 : 0),
             }),
         });
+        const results = searcher.search("가");
         expect(results.length).toBeGreaterThan(0);
         for (const r of results) {
             expect(typeof r.score).toBe("number");
@@ -245,20 +245,19 @@ describe("createSearcher - scoring option", () => {
     });
 
     it("scoring + score 함수 동시 사용", () => {
-        const searcher = createSearcher(["안녕", "안부"]);
-        const results = searcher.search("안", {
+        const searcher = createSearcher(["안녕", "안부"], {
             scoring: { weights: { positionZero: 0 } },
             score: (result, _target) => result.score ?? 0,
         });
+        const results = searcher.search("안");
         expect(results.length).toBe(2);
     });
 
     it("scoring이 limit과 함께 동작", () => {
-        const searcher = createSearcher(["가나", "가다", "가라", "가마", "나다"]);
-        const results = searcher.search("가", {
-            limit: 2,
+        const searcher = createSearcher(["가나", "가다", "가라", "가마", "나다"], {
             scoring: { weights: { positionZero: 300 } },
         });
+        const results = searcher.search("가", { limit: 2 });
         expect(results.length).toBe(2);
     });
 });

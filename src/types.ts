@@ -221,15 +221,14 @@ export type ScoringConfig = {
     graphemeBonus?: number[] | ((graphemeIndex: number, target: Target) => number);
 };
 
+/**
+ * `createSearcher`에 넘기는 옵션. **세션 의미가 있는 모든 옵션은 여기서 고정**된다 —
+ * 한 번 만든 searcher는 동일한 매칭 정책으로 모든 `.search()` 호출을 처리한다.
+ * 다른 정책이 필요하면 새 searcher 인스턴스를 만든다.
+ */
 export type SearcherOptions<T = string> = {
+    /** 아이템에서 검색 키 문자열을 추출하는 함수. T가 string이 아니면 필수. */
     key?: (item: T) => string;
-};
-
-export type SearchOptions = {
-    limit?: number;
-    literal?: boolean;
-    score?: (result: MatchResult, target: Target) => number;
-    scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
     /**
      * 엄격 매칭 모드. 기본 `false` (모든 한글 grapheme을 관대하게 매칭).
      *
@@ -244,7 +243,31 @@ export type SearchOptions = {
      * @see {@link WhitespaceMode}
      */
     whitespace?: WhitespaceMode;
+    /**
+     * DP 가중치 / per-grapheme bonus. 객체이거나 target별로 다른 설정이 필요하면 함수 형태.
+     * `matchBest` 호출 직전에 평가되어 적용된다.
+     */
+    scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
+    /**
+     * 아이템 간 최종 정렬용 score 함수. 미지정 시 `MatchResult.score`(matchBest의 DP 결과)를 사용.
+     * caller가 score 의미를 직접 정의하고 싶을 때 사용 (예: `defaultScore`).
+     */
+    score?: (result: MatchResult, target: Target) => number;
 };
+
+/**
+ * `searcher.search()` 호출 단위로 결정되는 옵션 — per-call 의미만 남긴다.
+ * 매칭 정책(`whitespace`/`strict`/`scoring`/`score`)은 `SearcherOptions`로 이동했다.
+ */
+export type SearchResultOptions = {
+    /** 결과 상위 N개만 유지 (0 또는 미지정 = 전체). */
+    limit?: number;
+    /** `true`면 substring(literal) 매치 경로. `whitespace` 옵션은 무시되며 raw substring 비교. */
+    literal?: boolean;
+};
+
+/** @deprecated `SearcherOptions` (정책) + `SearchResultOptions` (per-call) 로 분리됨. */
+export type SearchOptions = SearchResultOptions;
 
 export type SearchResult<T = string> = {
     item: T;
@@ -255,7 +278,7 @@ export type SearchResult<T = string> = {
 };
 
 export interface Searcher<T = string> {
-    search(queryInput: string, options?: SearchOptions): SearchResult<T>[];
+    search(queryInput: string, options?: SearchResultOptions): SearchResult<T>[];
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;

@@ -17,6 +17,7 @@ export type {
     SearcherOptions,
     SearchOptions,
     SearchResult,
+    SearchResultOptions,
     Target,
     WhitespaceMode,
 } from "./types";

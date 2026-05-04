@@ -93,34 +93,26 @@ describe("ignore 모드 - 매칭 동작", () => {
 
 describe("ignore 모드 - createSearcher 세션", () => {
     it("동일 모드 연속 호출에서 atoms prefix narrowing 유지", () => {
-        const searcher = createSearcher(["abcdef", "xyz", "abczdef"]);
-        const r1 = searcher.search("a", { whitespace: "ignore" });
+        const searcher = createSearcher(["abcdef", "xyz", "abczdef"], { whitespace: "ignore" });
+        const r1 = searcher.search("a");
         expect(r1.map((x) => x.item).sort()).toEqual(["abcdef", "abczdef"]);
 
-        const r2 = searcher.search("a ", { whitespace: "ignore" });
+        const r2 = searcher.search("a ");
         expect(r2.map((x) => x.item).sort()).toEqual(["abcdef", "abczdef"]);
 
-        const r3 = searcher.search("a b", { whitespace: "ignore" });
+        const r3 = searcher.search("a b");
         expect(r3.map((x) => x.item).sort()).toEqual(["abcdef", "abczdef"]);
     });
 
-    it("모드 전환 시 세션 reset (preserve → ignore)", () => {
-        const searcher = createSearcher(["ab", "a b"]);
+    it("preserve 모드와 ignore 모드는 별 인스턴스 — 결과 다름", () => {
+        const items = ["ab", "a b"];
+        const preserveSearcher = createSearcher(items, { whitespace: "preserve" });
+        const ignoreSearcher = createSearcher(items, { whitespace: "ignore" });
 
-        const r1 = searcher.search("a b", { whitespace: "preserve" });
-        expect(r1.map((x) => x.item)).toEqual(["a b"]);
+        const rPreserve = preserveSearcher.search("a b");
+        expect(rPreserve.map((x) => x.item)).toEqual(["a b"]);
 
-        const r2 = searcher.search("a b", { whitespace: "ignore" });
-        expect(r2.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
-    });
-
-    it("모드 전환 ignore → preserve", () => {
-        const searcher = createSearcher(["ab", "a b"]);
-
-        const r1 = searcher.search("a b", { whitespace: "ignore" });
-        expect(r1.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
-
-        const r2 = searcher.search("a b", { whitespace: "preserve" });
-        expect(r2.map((x) => x.item)).toEqual(["a b"]);
+        const rIgnore = ignoreSearcher.search("a b");
+        expect(rIgnore.map((x) => x.item).sort()).toEqual(["a b", "ab"]);
     });
 });
