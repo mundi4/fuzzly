@@ -230,6 +230,11 @@ export type SearcherOptions<T = string> = {
     /** 아이템에서 검색 키 문자열을 추출하는 함수. T가 string이 아니면 필수. */
     key?: (item: T) => string;
     /**
+     * 항목의 prebuilt `Target`을 직접 공급한다. 주면 `preprocessTarget(key(item))` 대신 이걸 써
+     * 재전처리를 건너뛴다 (외부에 영속한 Target hydrate 용). 주면 `key`는 불필요.
+     */
+    target?: (item: T) => Target;
+    /**
      * 엄격 매칭 모드. 기본 `false` (모든 한글 grapheme을 관대하게 매칭).
      *
      * `true`로 지정하면 모음이 포함된 쿼리 grapheme은 target anchor와 atom 시퀀스가

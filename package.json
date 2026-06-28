@@ -1,6 +1,6 @@
 {
   "name": "fuzzly",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "커맨트팔레트 용 그냥대충 애매하게 한글 매칭",
   "exports": {

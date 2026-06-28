@@ -51,7 +51,7 @@ function heapReplace<T>(heap: SearchResult<T>[], item: SearchResult<T>): void {
 // 첫 호출 시 한 번만 검사 후 캐시 (중복 경고 방지). 프로덕션 빌드는 NODE_ENV === "production" 면 스킵.
 // ---------------------------------------------------------------------------
 
-const SEARCHER_ONLY_KEYS = new Set(["key", "strict", "whitespace", "scoring", "score"]);
+const SEARCHER_ONLY_KEYS = new Set(["key", "target", "strict", "whitespace", "scoring", "score"]);
 const SEARCH_ONLY_KEYS = new Set(["limit", "literal"]);
 
 const isProd = (() => {
@@ -97,7 +97,7 @@ function warnUnknownKeys(opts: object | undefined, allowed: Set<string>, where: 
  */
 export function createSearcher<T>(
     items: readonly T[],
-    options: SearcherOptions<T> & { key: (item: T) => string },
+    options: SearcherOptions<T> & ({ key: (item: T) => string } | { target: (item: T) => Target }),
 ): Searcher<T>;
 export function createSearcher(items: readonly string[], options?: SearcherOptions<string>): Searcher<string>;
 export function createSearcher<T>(items: readonly T[], options: SearcherOptions<T> = {}): Searcher<T> {
@@ -114,6 +114,8 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             throw new TypeError("createSearcher requires options.key when items are not strings");
         });
 
+    const toTarget: (item: T) => Target = options.target ?? ((item) => preprocessTarget(keyFn(item)));
+
     const strict = options.strict ?? false;
     const whitespace = options.whitespace ?? "ignore";
     const scoringOpt = options.scoring;
@@ -123,7 +125,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
     let entries: Array<{ item: T; target: Target }> = items.map((item) => ({
         item,
-        target: preprocessTarget(keyFn(item)),
+        target: toTarget(item),
     }));
 
     // 세션 상태: 이전 쿼리의 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
@@ -221,7 +223,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
 
         add(...newItems: T[]) {
             for (const item of newItems) {
-                entries.push({ item, target: preprocessTarget(keyFn(item)) });
+                entries.push({ item, target: toTarget(item) });
             }
             resetSession();
         },
@@ -234,7 +236,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         replaceAll(newItems: readonly T[]) {
             entries = newItems.map((item) => ({
                 item,
-                target: preprocessTarget(keyFn(item)),
+                target: toTarget(item),
             }));
             resetSession();
         },

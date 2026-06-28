@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSearcher } from "../src/index";
+import { createSearcher, preprocessTarget } from "../src/index";
 
 describe("createSearcher", () => {
     describe("기본 사용", () => {
@@ -331,6 +331,68 @@ describe("createSearcher", () => {
                 s.search("a", { limit: 2, literal: false });
             });
             expect(warnings).toEqual([]);
+        });
+    });
+
+    describe("prebuilt target (options.target)", () => {
+        interface Doc {
+            id: number;
+            label: string;
+        }
+
+        const docs: Doc[] = [
+            { id: 1, label: "안녕하세요" },
+            { id: 2, label: "Hello World" },
+            { id: 3, label: "반갑습니다 friend" },
+        ];
+
+        it("target resolver 결과가 key 경로와 동일 (score·순서·ranges)", () => {
+            for (const q of ["안", "hello", "반갑", "world", "friend", "ㅎㅅ"]) {
+                const byKey = createSearcher(docs, { key: (d) => d.label });
+                const byTarget = createSearcher(docs, { target: (d) => preprocessTarget(d.label) });
+
+                const a = byKey.search(q);
+                const b = byTarget.search(q);
+
+                expect(b.map((r) => r.item.id)).toEqual(a.map((r) => r.item.id));
+                expect(b.map((r) => r.score)).toEqual(a.map((r) => r.score));
+                expect(b.map((r) => r.ranges())).toEqual(a.map((r) => r.ranges()));
+            }
+        });
+
+        it("target 이 key 보다 우선 — 주입한 Target 으로만 매치", () => {
+            // key 와 어긋난 Target 주입: key 는 label, target 은 전혀 다른 문자열로 빌드.
+            const searcher = createSearcher(docs, {
+                key: (d) => d.label,
+                target: () => preprocessTarget("zzzpayload"),
+            });
+
+            // 주입 Target 문자열로는 매치됨
+            expect(searcher.search("zzz")).toHaveLength(3);
+            // key(label) 문자열로는 매치 안 됨 (재전처리 안 함을 관찰)
+            expect(searcher.search("안")).toHaveLength(0);
+        });
+
+        it("add/replaceAll 도 prebuilt target 경로를 탐", () => {
+            const searcher = createSearcher<Doc>([], {
+                target: () => preprocessTarget("zzzpayload"),
+            });
+
+            searcher.add({ id: 10, label: "안녕" });
+            expect(searcher.search("zzz")).toHaveLength(1);
+            expect(searcher.search("안")).toHaveLength(0);
+
+            searcher.replaceAll([
+                { id: 11, label: "무관" },
+                { id: 12, label: "무관" },
+            ]);
+            expect(searcher.search("zzz")).toHaveLength(2);
+        });
+
+        it("key 생략 + target 만으로 non-string T 빌드 성공 (throw 안 함)", () => {
+            expect(() => createSearcher(docs, { target: (d) => preprocessTarget(d.label) })).not.toThrow();
+            const searcher = createSearcher(docs, { target: (d) => preprocessTarget(d.label) });
+            expect(searcher.search("hello")).toHaveLength(1);
         });
     });
 });
