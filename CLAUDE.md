@@ -91,8 +91,6 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 **세션 최적화**: `createSearcher`는 `literal` 토글 시 세션을 리셋한다 (`strict`/`whitespace`는 인스턴스 단위로 고정이라 애초에 안 바뀜). 재사용 판정은 **토큰별 atom prefix**: 이전 쿼리의 모든 토큰이 각각 새 쿼리의 어떤 토큰의 atom-prefix이면 이전 매치만 재스캔한다. split 모드도 이 규칙으로 세션 재사용되며, 멀티필드도 동일 로직을 공유한다.
 
-**chosung un-gating 가드** (issue #35): `chosung: false` 필드가 하나라도 있는 멀티필드 searcher에서는 atom-prefix만으로 단조성이 성립하지 않는다. 초성-only 토큰은 `chosung:false` 필드에서 gate-out되므로, 모음이 붙어 초성-only가 풀리는 순간(예: `ㅍ`→`파`) 그 필드가 un-gate되어 매치 집합이 **커진다**. `makeRuntime`는 이전 토큰이 초성-only인데 대응 현재 토큰이 초성-only가 아니면 재사용을 금지(full scan)하여 단조 narrowing을 보존한다. `chosung:false` 필드가 없으면 이 가드는 무효(single-field 포함).
-
 ### whitespace 모드 (공백 처리)
 
 **`WhitespaceMode`** (`SearchOptions.whitespace`, `buildQuery` 2번째 인자 `{ whitespace }`):
@@ -123,6 +121,8 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 핵심 포인트: anchorFill은 Σ(atoms²) 스케일이라 한 anchor에 atom이 몰린 완전 매치가 이 항 기준으로 유리하다. 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
 
+**scoring config 캐시 계약 (issue #37)**: `SearcherOptions.scoring`/`MultiFieldSearcherOptions.scoring`이 함수 형태(`(target) => ScoringConfig`)이면 **entry 생성 시점(searcher 생성 / `add` / `replaceAll`)에 entry당(멀티필드는 필드 target당) 1회** 평가되어 캐시된다 — 매 search가 아니다. 따라서 scoring 함수는 **target만의 순수함수**여야 한다 (`createGraphemeBonuses` 같은 per-target 비용은 키스트로크마다 재계산되지 않는다). 캐시는 searcher 계층(`createSearcher`)의 책임이며, `matchBest`/`matchFields`를 직접 호출하는 low-level 경로는 기존대로 호출 시점에 resolve한다. 멀티필드는 pre-resolved config를 `MatchField.scoring`으로 전달하며, 이는 `matchFields`의 `opts.scoring`보다 우선한다.
+
 ### 멀티필드 매칭 (`matchFields.ts`)
 
 하나의 (split) 쿼리를 여러 필드(Target)에 대해 **토큰 단위 cross-field AND**로 매칭한다. split 위에 서므로
@@ -133,7 +133,6 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 | **토큰 AND** | 각 토큰은 `max over fields(weighted score)`로 최적 필드 결정. 모든 토큰이 ≥1 필드에서 hit해야 통과, 하나라도 미커버면 `null` |
 | **argmax 귀속** | 각 토큰은 argmax 필드에만 하이라이트 귀속(winner-takes-highlight). weighted 동점이면 **낮은 필드 인덱스** 승 (strict `>`) |
 | **부호 보존 weight** | `score >= 0 ? score*w : score/w`. weight를 올리면 양·음수 전 구간에서 유리. `weight > 0` 필수 (아니면 `RangeError`) |
-| **토큰 단위 chosung** | 토큰의 모든 grapheme이 자음-only일 때만 "초성 토큰". 초성 토큰은 `chosung: false` 필드에서 후보 수집 스킵(hard filter). 혼합 토큰(`홍ㄱ`)은 영향 없음 |
 | **score 분리** | 아이템 최상위 `score` = Σ 토큰 best **weighted**. `perField[i].score` = 그 필드 귀속 토큰들의 **raw**(비가중) 합 (`mergeMatchResults`, split 합성과 동일 규칙) |
 | **길이 정규화 없음** | 짧은 필드 우위는 의도된 동작 (정규화하지 않음) |
 | **dedup 계약** | split의 atom-prefix dedup 그대로. `"홍길동 홍"` ≡ `"홍길동"` |
@@ -161,7 +160,7 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 옵션 분리 (옵션 위치 = 의미):
 
-- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
+- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`, `tiebreakKey`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
 - `SearchResultOptions` (per-call): `limit`, `literal`. search 단위로만 의미 있는 옵션.
 - `SearchOptions` 는 `SearchResultOptions` 의 alias (deprecated).
 
@@ -171,6 +170,7 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 - `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`)
 - `SearcherOptions.strict?: boolean` (기본 `false`)
+- `SearcherOptions.tiebreakKey?: (item) => number` — score 동점 시 2차 정렬 키. 순서는 **score desc → tiebreakKey asc**. entry 생성 시 1회 평가·캐시. limit(heap) 경로의 eviction 판정도 `(score, tie)` 비교라 top-N이 결정적. `(score, tie)` 완전 동점 항목의 top-N **진입**은 unspecified이나 반환 **순서**는 결정적. 멀티필드도 동일.
 
 ## Conventions
 

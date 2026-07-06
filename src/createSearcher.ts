@@ -1,7 +1,7 @@
 import { buildMatchRanges } from "./buildMatchRanges";
 import { buildQuery } from "./buildQuery";
 import { matchBest, matchLiteral } from "./match";
-import { isChosungOnlyToken, matchFields } from "./matchFields";
+import { matchFields } from "./matchFields";
 import { preprocessTarget } from "./preprocessTarget";
 import type {
     FieldsMatchResult,
@@ -21,21 +21,30 @@ import type {
 } from "./types";
 
 // ---------------------------------------------------------------------------
-// Min-heap (score 오름차순) — limit > 0일 때 상위 N개만 유지
+// Min-heap — limit > 0일 때 상위 N개만 유지.
+// 정렬 순서는 score desc → tie asc 이므로, heap root 는 top-N 중 "최악"
+// (최저 score, 동점이면 최대 tie) 을 유지한다. worse(a,b) = a가 b보다 하위 랭크.
 // ---------------------------------------------------------------------------
 
-function heapPush<S extends { score?: number }>(heap: S[], item: S): void {
+type Ranked<R> = { score: number; tie: number; value: R };
+
+// a 가 b 보다 하위 랭크(더 나쁨)이면 true. score 낮을수록, 동점이면 tie 클수록 하위.
+function worse(a: { score: number; tie: number }, b: { score: number; tie: number }): boolean {
+    return a.score < b.score || (a.score === b.score && a.tie > b.tie);
+}
+
+function heapPush<R>(heap: Ranked<R>[], item: Ranked<R>): void {
     heap.push(item);
     let i = heap.length - 1;
     while (i > 0) {
         const parent = (i - 1) >> 1;
-        if ((heap[parent].score ?? 0) <= (heap[i].score ?? 0)) break;
+        if (!worse(heap[i], heap[parent])) break; // 자식이 부모보다 나쁘지 않으면 min-heap 불변 성립
         [heap[parent], heap[i]] = [heap[i], heap[parent]];
         i = parent;
     }
 }
 
-function heapReplace<S extends { score?: number }>(heap: S[], item: S): void {
+function heapReplace<R>(heap: Ranked<R>[], item: Ranked<R>): void {
     heap[0] = item;
     const n = heap.length;
     let i = 0;
@@ -43,12 +52,17 @@ function heapReplace<S extends { score?: number }>(heap: S[], item: S): void {
         let smallest = i;
         const l = 2 * i + 1;
         const r = 2 * i + 2;
-        if (l < n && (heap[l].score ?? 0) < (heap[smallest].score ?? 0)) smallest = l;
-        if (r < n && (heap[r].score ?? 0) < (heap[smallest].score ?? 0)) smallest = r;
+        if (l < n && worse(heap[l], heap[smallest])) smallest = l;
+        if (r < n && worse(heap[r], heap[smallest])) smallest = r;
         if (smallest === i) break;
         [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
         i = smallest;
     }
+}
+
+// 최종 정렬 comparator: score desc, 동점이면 tie asc.
+function byRank(a: { score: number; tie: number }, b: { score: number; tie: number }): number {
+    return b.score - a.score || a.tie - b.tie;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +73,16 @@ function heapReplace<S extends { score?: number }>(heap: S[], item: S): void {
 // 첫 호출 시 한 번만 검사 후 캐시 (중복 경고 방지). 프로덕션 빌드는 NODE_ENV === "production" 면 스킵.
 // ---------------------------------------------------------------------------
 
-const SEARCHER_ONLY_KEYS = new Set(["key", "target", "fields", "strict", "whitespace", "scoring", "score"]);
+const SEARCHER_ONLY_KEYS = new Set([
+    "key",
+    "target",
+    "fields",
+    "strict",
+    "whitespace",
+    "scoring",
+    "score",
+    "tiebreakKey",
+]);
 const SEARCH_ONLY_KEYS = new Set(["limit", "literal"]);
 
 const isProd = (() => {
@@ -107,28 +130,22 @@ type Runtime<T, R> = {
  */
 type Evaluate<E, R> = (entry: E, query: Query | null, queryInput: string) => { score: number; make: () => R } | null;
 
-function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
+function makeRuntime<T, E extends { item: T; tie: number }, R>(
     items: readonly T[],
     toEntry: (item: T) => E,
     whitespace: WhitespaceMode,
     evaluate: Evaluate<E, R>,
-    // chosung:false 필드가 하나라도 있으면 세션 재사용 단조성이 깨질 수 있다 (issue #35).
-    // 초성-only 토큰은 chosung:false 필드에서 gate-out 되므로, 모음이 붙어 초성-only 가
-    // 풀리는 순간(예: "ㅍ"→"파") 해당 필드가 un-gate 되어 매치 집합이 커진다.
-    hasChosungFalseField = false,
 ): Runtime<T, R> {
     let entries: E[] = items.map(toEntry);
 
-    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, 토큰별 초성-only 플래그, literal 모드, 매치된 엔트리 인덱스 배열.
+    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
     // split 모드는 토큰(subQuery)마다 atoms 를 가지므로 문자열 배열로 보관한다.
     let prevTokens: string[] = [];
-    let prevTokenChosung: boolean[] = [];
     let prevLiteral = false;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevTokens = [];
-        prevTokenChosung = [];
         prevLiteral = false;
         prevMatchedIndices = null;
     }
@@ -150,36 +167,13 @@ function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
                   ? query.subQueries.map((s) => s.atoms)
                   : [query ? query.atoms : ""];
 
-            // 토큰별 초성-only 여부 (chosung un-gating 가드용). literal·빈 쿼리는 무의미하므로 false.
-            const currentTokenChosung: boolean[] =
-                currentLiteral || !query
-                    ? currentTokens.map(() => false)
-                    : query.subQueries
-                      ? query.subQueries.map((s) => isChosungOnlyToken(s))
-                      : [isChosungOnlyToken(query)];
-
             // literal 모드 토글 시 세션 단절.
             // 이전 모든 토큰이 각각 어떤 현재 토큰의 atom-prefix 이면 매치 집합은 단조 축소 →
             // 이전 매치만 재스캔. 동일 쿼리 재실행(prefix == 자기 자신)도 안전하게 재사용.
-            //
-            // chosung un-gating 가드 (issue #35): chosung:false 필드가 있으면, 초성-only 였던 이전
-            // 토큰이 초성-only 가 아닌 현재 토큰으로 확장될 때(모음 추가) 그 필드가 un-gate 되어
-            // 매치 집합이 커질 수 있다 → 단조 축소 위반. 그 경우 재사용 금지(full scan).
             const flagsCompatible = prevLiteral === currentLiteral;
             const canReuse =
                 prevTokens.length > 0 &&
-                prevTokens.every((p, j) => {
-                    if (p.length === 0) return false;
-                    let matched = false;
-                    for (let c = 0; c < currentTokens.length; c++) {
-                        if (!currentTokens[c].startsWith(p)) continue;
-                        matched = true;
-                        if (hasChosungFalseField && prevTokenChosung[j] && !currentTokenChosung[c]) {
-                            return false; // 초성-only → 비초성-only 전이 = un-gating → unsound
-                        }
-                    }
-                    return matched;
-                }) &&
+                prevTokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p))) &&
                 flagsCompatible &&
                 prevMatchedIndices !== null;
             const sessionIndices = canReuse ? prevMatchedIndices : null;
@@ -190,41 +184,42 @@ function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
             let results: R[];
 
             if (limit > 0) {
-                const heap: R[] = [];
-                let minScore = -Infinity;
+                const heap: Ranked<R>[] = [];
 
                 for (const i of scan) {
                     const ev = evaluate(entries[i], query, queryInput);
                     if (ev === null) continue;
 
                     matchedIndices.push(i);
+                    const tie = entries[i].tie;
 
                     if (heap.length < limit) {
-                        heapPush(heap, ev.make());
-                        if (heap.length === limit) minScore = heap[0].score ?? 0;
-                    } else if (ev.score > minScore) {
-                        heapReplace(heap, ev.make());
-                        minScore = heap[0].score ?? 0;
+                        heapPush(heap, { score: ev.score, tie, value: ev.make() });
+                    } else {
+                        // full heap: root 가 top-N 중 최악. 후보가 root 보다 상위 랭크면 교체.
+                        const root = heap[0];
+                        if (ev.score > root.score || (ev.score === root.score && tie < root.tie)) {
+                            heapReplace(heap, { score: ev.score, tie, value: ev.make() });
+                        }
                     }
                 }
 
-                results = heap.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+                results = heap.sort(byRank).map((w) => w.value);
             } else {
-                results = [];
+                const collected: Ranked<R>[] = [];
 
                 for (const i of scan) {
                     const ev = evaluate(entries[i], query, queryInput);
                     if (ev === null) continue;
 
                     matchedIndices.push(i);
-                    results.push(ev.make());
+                    collected.push({ score: ev.score, tie: entries[i].tie, value: ev.make() });
                 }
 
-                results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+                results = collected.sort(byRank).map((w) => w.value);
             }
 
             prevTokens = currentTokens;
-            prevTokenChosung = currentTokenChosung;
             prevLiteral = currentLiteral;
             prevMatchedIndices = matchedIndices;
 
@@ -304,12 +299,15 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
     const resolveScoringConfig: ((target: Target) => ScoringConfig) | undefined =
         typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
     const scoreFn = options.score;
+    const tiebreakKey = options.tiebreakKey;
 
-    const evaluate: Evaluate<{ item: T; target: Target }, SearchResult<T>> = (entry, query, queryInput) => {
+    const evaluate: Evaluate<{ item: T; target: Target; scoring?: ScoringConfig; tie: number }, SearchResult<T>> = (
+        entry,
+        query,
+        queryInput,
+    ) => {
         const t = entry.target;
-        const result = query
-            ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined, strict)
-            : matchLiteral(queryInput, t);
+        const result = query ? matchBest(query, t, entry.scoring, strict) : matchLiteral(queryInput, t);
         if (result === null) return null;
 
         const score = scoreFn ? scoreFn(result, t) : (result.score ?? 0);
@@ -323,7 +321,16 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
         };
     };
 
-    return makeRuntime(items, (item) => ({ item, target: toTarget(item) }), whitespace, evaluate);
+    // scoring/tiebreakKey 는 entry 생성 시(생성/add/replaceAll) 아이템당 1회 평가되어 캐시된다.
+    return makeRuntime(
+        items,
+        (item) => {
+            const target = toTarget(item);
+            return { item, target, scoring: resolveScoringConfig?.(target), tie: tiebreakKey ? tiebreakKey(item) : 0 };
+        },
+        whitespace,
+        evaluate,
+    );
 }
 
 function createMultiFieldSearcher<T>(
@@ -353,27 +360,41 @@ function createMultiFieldSearcher<T>(
         if (!(w > 0)) throw new RangeError(`createSearcher: field weight must be > 0, got ${w}`);
     }
 
+    // 제거된 옵션 감지: 'chosung' 은 단조 narrowing 을 깨뜨려 삭제됨 (issue #36). JS 소비자 silent ignore 방지.
+    if (!isProd && fields.some((f) => "chosung" in f)) {
+        // eslint-disable-next-line no-console
+        console.warn("[fuzzly] createSearcher: field option 'chosung' was removed and is ignored");
+    }
+
     const strict = options.strict ?? false;
     const whitespace = options.whitespace ?? "ignore";
     const scoringOpt = options.scoring;
     const scoreFn = options.score;
+    const tiebreakKey = options.tiebreakKey;
 
-    // GC 압박 회피용 재사용 버퍼: target 만 entry 마다 갈아 끼운다.
+    // 함수형 scoring 은 entry 생성 시 target당 1회 resolve 해 캐시한다 (매 검색 재계산 회피).
+    // 객체형은 공유 상수 하나로 충분 (entry 저장 불필요).
+    const scoringFn = typeof scoringOpt === "function" ? scoringOpt : undefined;
+    const staticCfg: ScoringConfig | undefined = typeof scoringOpt === "function" ? undefined : scoringOpt;
+
+    // GC 압박 회피용 재사용 버퍼: target·scoring 만 entry 마다 갈아 끼운다.
     // matchFields 는 결과에 MatchField 참조를 남기지 않으므로 안전.
     const placeholder = preprocessTarget("");
-    const fieldBuf: MatchField[] = fields.map((f) => ({ target: placeholder, weight: f.weight, chosung: f.chosung }));
+    const fieldBuf: MatchField[] = fields.map((f) => ({ target: placeholder, weight: f.weight }));
 
-    const evaluate: Evaluate<{ item: T; targets: Target[] }, MultiFieldSearchResult<T>> = (
-        entry,
-        query,
-        queryInput,
-    ) => {
+    const evaluate: Evaluate<
+        { item: T; targets: Target[]; scorings?: ScoringConfig[]; tie: number },
+        MultiFieldSearchResult<T>
+    > = (entry, query, queryInput) => {
         const targets = entry.targets;
         let result: FieldsMatchResult | null;
 
         if (query) {
-            for (let f = 0; f < fieldBuf.length; f++) fieldBuf[f].target = targets[f];
-            result = matchFields(query, fieldBuf, { scoring: scoringOpt, strict });
+            for (let f = 0; f < fieldBuf.length; f++) {
+                fieldBuf[f].target = targets[f];
+                fieldBuf[f].scoring = entry.scorings ? entry.scorings[f] : staticCfg;
+            }
+            result = matchFields(query, fieldBuf, { strict });
         } else {
             // literal 멀티필드: any-field substring, score 0 (단일 필드 literal 과 동일).
             const perField: (MatchResult | null)[] = [];
@@ -395,14 +416,19 @@ function createMultiFieldSearcher<T>(
         };
     };
 
-    const hasChosungFalseField = fields.some((f) => f.chosung === false);
-
     return makeRuntime(
         items,
-        (item) => ({ item, targets: toTargets.map((tt) => tt(item)) }),
+        (item) => {
+            const targets = toTargets.map((tt) => tt(item));
+            return {
+                item,
+                targets,
+                scorings: scoringFn ? targets.map((t) => scoringFn(t)) : undefined,
+                tie: tiebreakKey ? tiebreakKey(item) : 0,
+            };
+        },
         whitespace,
         evaluate,
-        hasChosungFalseField,
     );
 }
 

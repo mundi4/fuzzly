@@ -1,19 +1,5 @@
-import { isConsonantLUT } from "./internal/atomRegistry";
 import { matchBest, mergeMatchResults } from "./match";
 import type { FieldsMatchResult, MatchField, MatchResult, Query, ScoringConfig, Target } from "./types";
-
-// 토큰의 모든 grapheme이 한글 자음-only일 때만 true (D4).
-// vowelIndex !== -1 (모음 있음) 또는 첫 atom이 자음이 아니면 (non-Hangul) false.
-// createSearcher 세션 재사용 가드도 이 판정을 공유한다 (chosung:false 필드 un-gating 감지).
-export function isChosungOnlyToken(q: Query): boolean {
-    const gs = q.graphemes;
-    if (gs.length === 0) return false;
-    for (const g of gs) {
-        if (g.vowelIndex !== -1) return false;
-        if (isConsonantLUT[g.atoms[0]] !== 1) return false;
-    }
-    return true;
-}
 
 // D1: 부호 보존 배율. weight를 올리면 양·음수 전 구간에서 항상 유리해진다.
 function applyWeight(score: number, w: number): number {
@@ -28,7 +14,7 @@ function applyWeight(score: number, w: number): number {
  * - 최상위 `score`는 토큰별 best weighted score의 합, `perField[i].score`는 raw(비가중) 합.
  *
  * @param query - `buildQuery`의 출력. split 모드면 `subQueries`가 토큰이 된다.
- * @param fields - 필드 정의 배열. 각 필드는 `target`(필수)·`weight`·`chosung`를 가진다.
+ * @param fields - 필드 정의 배열. 각 필드는 `target`(필수)·`weight`를 가진다.
  * @param opts - `scoring`(config 또는 target별 함수), `strict`.
  */
 export function matchFields(
@@ -53,18 +39,17 @@ export function matchFields(
     const scoringOpt = opts?.scoring;
     const cfgFor: (t: Target) => ScoringConfig | undefined =
         typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : () => undefined;
-    const fieldCfgs = fields.map((f) => cfgFor(f.target)); // 필드당 1회 resolve
+    // 필드에 pre-resolved scoring 이 있으면 우선, 없으면 opts.scoring 을 필드당 1회 resolve.
+    const fieldCfgs = fields.map((f) => f.scoring ?? cfgFor(f.target));
 
     let totalScore = 0;
     const winners: MatchResult[][] = fields.map(() => []);
 
     for (const token of tokens) {
-        const chosung = isChosungOnlyToken(token);
         let bestIdx = -1;
         let bestWeighted = -Infinity;
         let bestResult: MatchResult | null = null;
         for (let i = 0; i < fields.length; i++) {
-            if (chosung && fields[i].chosung === false) continue; // D4 hard filter
             const r = matchBest(token, fields[i].target, fieldCfgs[i], strict);
             if (r === null) continue;
             const weighted = applyWeight(r.score ?? 0, fields[i].weight ?? 1);

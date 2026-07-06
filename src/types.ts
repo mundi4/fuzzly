@@ -170,8 +170,12 @@ export type MatchField = {
     target: Target;
     /** 필드 가중치 (기본 1). 0 이하이면 RangeError. 스코어가 음수면 곱셈 대신 나눗셈이 적용된다 (부호 보존). */
     weight?: number;
-    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. 혼합 토큰은 영향 없음. */
-    chosung?: boolean;
+    /**
+     * 이 필드에 pre-resolved 된 per-field scoring config. 지정되면 `matchFields`의 `opts.scoring`
+     * (config 또는 target별 함수)보다 **우선**한다. searcher 계층이 함수형 scoring 을 entry 생성 시
+     * 1회 resolve 해 캐시하는 경로에서 사용된다.
+     */
+    scoring?: ScoringConfig;
 };
 
 /** `matchFields`의 반환값. */
@@ -272,7 +276,8 @@ export type SearcherOptions<T = string> = {
     whitespace?: WhitespaceMode;
     /**
      * DP 가중치 / per-grapheme bonus. 객체이거나 target별로 다른 설정이 필요하면 함수 형태.
-     * `matchBest` 호출 직전에 평가되어 적용된다.
+     * 함수 형태면 entry 생성 시(searcher 생성 / `add` / `replaceAll`) entry당 1회 평가되어 캐시된다
+     * (매 검색이 아님). 따라서 **target만의 순수함수**여야 한다.
      */
     scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
     /**
@@ -280,6 +285,15 @@ export type SearcherOptions<T = string> = {
      * caller가 score 의미를 직접 정의하고 싶을 때 사용 (예: `defaultScore`).
      */
     score?: (result: MatchResult, target: Target) => number;
+    /**
+     * score 동점 시 2차 정렬 키 (**asc**). 정렬 순서는 `score desc → tiebreakKey asc`이며,
+     * score가 다르면 무시된다. 미지정 시 기존 동작(내부 tie=0). entry 생성 시(searcher 생성 /
+     * `add` / `replaceAll`) 아이템당 1회 평가되어 캐시된다 — item 불변 가정.
+     *
+     * `(score, tie)` 완전 동점 항목들 사이에서 `limit` 경계의 top-N **진입**은 미지정(unspecified)이나,
+     * 반환된 결과의 **순서**는 항상 결정적이다.
+     */
+    tiebreakKey?: (item: T) => number;
 };
 
 /**
@@ -321,8 +335,6 @@ export type SearcherFieldSpec<T> = {
     target?: (item: T) => Target;
     /** 필드 가중치 (기본 1). 0 이하이면 RangeError. */
     weight?: number;
-    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. */
-    chosung?: boolean;
 };
 
 /**
@@ -336,10 +348,20 @@ export type MultiFieldSearcherOptions<T> = {
     strict?: boolean;
     /** 쿼리 공백 처리 정책. 기본 `"ignore"`. @see {@link WhitespaceMode} */
     whitespace?: WhitespaceMode;
-    /** DP 가중치 / per-grapheme bonus. 모든 필드에 공통 적용된다. */
+    /**
+     * DP 가중치 / per-grapheme bonus. 모든 필드에 공통 적용된다.
+     * 함수 형태면 entry 생성 시(searcher 생성 / `add` / `replaceAll`) 필드 target마다 1회 평가되어
+     * 캐시된다 (매 검색이 아님). 따라서 **target만의 순수함수**여야 한다.
+     */
     scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
     /** 아이템 간 최종 정렬용 score 함수. 미지정 시 `FieldsMatchResult.score`. */
     score?: (result: FieldsMatchResult, targets: Target[]) => number;
+    /**
+     * score 동점 시 2차 정렬 키 (**asc**). 정렬 순서는 `score desc → tiebreakKey asc`이며,
+     * score가 다르면 무시된다. 미지정 시 기존 동작. entry 생성 시 아이템당 1회 평가되어 캐시된다.
+     * @see {@link SearcherOptions.tiebreakKey}
+     */
+    tiebreakKey?: (item: T) => number;
 };
 
 /** 멀티필드 검색 결과 한 건. */

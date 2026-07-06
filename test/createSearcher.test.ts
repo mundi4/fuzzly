@@ -334,8 +334,11 @@ describe("createSearcher", () => {
         });
     });
 
-    describe("split 세션 재사용 (커밋 1)", () => {
-        // scoring 을 함수로 넘기면 스캔하는 entry 마다 1회 호출 → 스캔 수 관찰용 스파이.
+    describe("split 세션 재사용 + scoring 캐시 (커밋 1, issue #37)", () => {
+        // scoring 함수는 이제 entry 생성 시 1회만 resolve 되어 캐시된다 (매 검색 아님, issue #37).
+        // 스파이로 (a) 생성 시 entry당 1회 호출, (b) 검색 중 재호출 없음을 검증하고,
+        // 세션 재사용 경로의 정확성은 fresh searcher 와의 결과 동일성으로 방어한다.
+        // (scan 수 자체는 #37 이후 public API 로 관찰 불가 — reuse-corruption 은 결과 동일성으로 방어.)
         const makeSpy = () => {
             let calls = 0;
             const scoring = () => {
@@ -347,81 +350,94 @@ describe("createSearcher", () => {
 
         const JEMOK = ["멋진 제목", "제목 없음", "제목 멋짐", "다른 항목", "무관"];
 
-        it("split narrowing: 두 번째 스캔 수 = 첫 매치 수, 결과는 fresh 와 동일", () => {
+        it("split narrowing: 재사용 경로가 fresh 와 동일 (scoring 생성 시 1회 캐시)", () => {
             const spy = makeSpy();
             const searcher = createSearcher(JEMOK, { whitespace: "split", scoring: spy.scoring });
+            expect(spy.count()).toBe(JEMOK.length); // 생성 시 entry당 1회 resolve
 
-            const r1 = searcher.search("제목");
-            const afterFirst = spy.count();
-            expect(afterFirst).toBe(JEMOK.length); // 첫 검색은 전체 스캔
-
-            const r2 = searcher.search("제목 멋");
-            const secondScans = spy.count() - afterFirst;
-            expect(secondScans).toBe(r1.length); // 재사용: 첫 매치만 재스캔
+            searcher.search("제목");
+            const r2 = searcher.search("제목 멋"); // "제목" atom-prefix → 세션 재사용
+            expect(spy.count()).toBe(JEMOK.length); // 검색은 scoring 을 재호출하지 않는다
 
             const fresh = createSearcher(JEMOK, { whitespace: "split" });
             expect(r2.map((r) => r.item)).toEqual(fresh.search("제목 멋").map((r) => r.item));
         });
 
-        it("dedup 재정렬 케이스도 재사용 성립", () => {
+        it("dedup 재정렬 케이스도 재사용 경로 정확", () => {
             const items = ["안녕하세요", "안녕", "반갑", "안심"];
             const spy = makeSpy();
             const searcher = createSearcher(items, { whitespace: "split", scoring: spy.scoring });
+            expect(spy.count()).toBe(items.length);
 
-            const r1 = searcher.search("안녕 안"); // dedup → ["안녕"]
-            const afterFirst = spy.count();
-            expect(afterFirst).toBe(items.length);
-
+            searcher.search("안녕 안"); // dedup → ["안녕"]
             const r2 = searcher.search("안녕 안녕하"); // dedup → ["안녕하"]
-            const secondScans = spy.count() - afterFirst;
-            expect(secondScans).toBe(r1.length);
+            expect(spy.count()).toBe(items.length);
 
             const fresh = createSearcher(items, { whitespace: "split" });
             expect(r2.map((r) => r.item)).toEqual(fresh.search("안녕 안녕하").map((r) => r.item));
         });
 
-        it("토큰 중간 편집은 재사용 불성립 → 전체 재스캔", () => {
+        it("토큰 중간 편집(재사용 불성립)은 전체 재스캔 — 데코이로 검증", () => {
+            // "제묘 멋짐" 은 q2("제묘 멋")엔 매치되지만 q1("제목 멋")엔 매치되지 않는다.
+            // 재사용이 (잘못) 성립하면 q1 매치집합만 재스캔되어 이 데코이가 누락된다 → fresh 와 불일치.
+            const items = ["멋진 제목", "제목 멋짐", "제묘 멋짐", "무관"];
             const spy = makeSpy();
-            const searcher = createSearcher(JEMOK, { whitespace: "split", scoring: spy.scoring });
+            const searcher = createSearcher(items, { whitespace: "split", scoring: spy.scoring });
 
             searcher.search("제목 멋");
-            const afterFirst = spy.count();
+            const r2 = searcher.search("제묘 멋"); // 제목 → 제묘: 커버 안 됨 → 전체 재스캔
+            expect(spy.count()).toBe(items.length); // scoring 은 생성 시 1회뿐
 
-            const r2 = searcher.search("제묘 멋"); // 제목 → 제묘: 커버 안 됨
-            const secondScans = spy.count() - afterFirst;
-            expect(secondScans).toBe(JEMOK.length); // 전체 재스캔
-
-            const fresh = createSearcher(JEMOK, { whitespace: "split" });
+            const fresh = createSearcher(items, { whitespace: "split" });
             expect(r2.map((r) => r.item)).toEqual(fresh.search("제묘 멋").map((r) => r.item));
+            expect(r2.some((r) => r.item === "제묘 멋짐")).toBe(true); // 데코이 포함 = 전체 재스캔 증거
         });
 
-        it("토큰 병합은 재사용 불성립 (커버되지 않는 토큰)", () => {
+        it("토큰 병합(재사용 불성립)도 fresh 와 동일", () => {
             const items = ["아나운서", "아이", "나비"];
             const spy = makeSpy();
             const searcher = createSearcher(items, { whitespace: "split", scoring: spy.scoring });
 
             searcher.search("아 나"); // 토큰 [아, 나]
-            const afterFirst = spy.count();
-
-            const r2 = searcher.search("아나"); // 토큰 [아나] — "나" 미커버
-            const secondScans = spy.count() - afterFirst;
-            expect(secondScans).toBe(items.length);
+            const r2 = searcher.search("아나"); // 토큰 [아나] — "나" 미커버 → 전체 재스캔
+            expect(spy.count()).toBe(items.length);
 
             const fresh = createSearcher(items, { whitespace: "split" });
             expect(r2.map((r) => r.item)).toEqual(fresh.search("아나").map((r) => r.item));
         });
 
-        it("동일 쿼리 재실행도 재사용", () => {
+        it("동일 쿼리 재실행도 재사용 경로 정확", () => {
             const spy = makeSpy();
             const searcher = createSearcher(JEMOK, { whitespace: "split", scoring: spy.scoring });
 
             const r1 = searcher.search("제목");
-            const afterFirst = spy.count();
-
             const r2 = searcher.search("제목");
-            const secondScans = spy.count() - afterFirst;
-            expect(secondScans).toBe(r1.length);
+            expect(spy.count()).toBe(JEMOK.length); // 재실행도 scoring 재호출 없음
             expect(r2.map((r) => r.item)).toEqual(r1.map((r) => r.item));
+        });
+    });
+
+    describe("scoring config 캐시 계약 (issue #37)", () => {
+        it("단일 필드: scoring 함수는 entry 생성 시 1회, 검색은 재호출 안 함, add/replaceAll 시 재resolve", () => {
+            let calls = 0;
+            const scoring = () => {
+                calls++;
+                return {};
+            };
+            const items = ["안녕", "반가", "하이"];
+            const s = createSearcher(items, { scoring });
+            expect(calls).toBe(items.length); // 생성 시 정확히 N회
+
+            s.search("안");
+            s.search("안녕");
+            s.search("하");
+            expect(calls).toBe(items.length); // search 3연속 → 증가 없음
+
+            s.add("추가");
+            expect(calls).toBe(items.length + 1); // add(item) → +1
+
+            s.replaceAll(["가", "나", "다", "라"]);
+            expect(calls).toBe(items.length + 1 + 4); // replaceAll(M) → +M
         });
     });
 

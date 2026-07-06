@@ -14,7 +14,7 @@ const DOCS: Doc[] = [
 ];
 
 const multiOpts: MultiFieldSearcherOptions<Doc> = {
-    fields: [{ key: (d) => d.title }, { key: (d) => d.creator, weight: 1.2, chosung: true }],
+    fields: [{ key: (d) => d.title }, { key: (d) => d.creator, weight: 1.2 }],
     whitespace: "split",
 };
 
@@ -46,22 +46,23 @@ describe("createSearcher 멀티필드", () => {
         expect(r[0].item.creator).toBe("계약왕"); // weight 10 필드로 매치된 쪽이 상위
     });
 
-    it("3. 세션 narrowing: 두 번째 스캔이 첫 매치로 좁혀짐", () => {
+    it("3. 세션 narrowing: 재사용 경로가 fresh 와 동일 + scoring 캐시 (issue #37)", () => {
         let calls = 0;
         const scoring = () => {
             calls++;
             return {};
         };
         const s = createSearcher(DOCS, { ...multiOpts, scoring });
-        const F = 2; // 필드 수 — matchFields 는 필드당 1회 scoring resolve
+        const F = 2; // 필드 수 — 멀티필드는 entry당 필드 target마다 1회 resolve
+        expect(calls).toBe(DOCS.length * F); // 생성 시 캐시 (매 검색 아님)
 
-        const r1 = s.search("홍");
-        const afterFirst = calls;
-        expect(afterFirst).toBe(DOCS.length * F);
+        s.search("홍");
+        const r2 = s.search("홍길동"); // "홍" atom-prefix → 세션 재사용
+        expect(calls).toBe(DOCS.length * F); // 검색은 scoring 을 재호출하지 않는다
 
-        s.search("홍길동"); // "홍" atom-prefix → 재사용
-        const secondScans = (calls - afterFirst) / F;
-        expect(secondScans).toBe(r1.length);
+        // 재사용 경로가 fresh searcher 와 동일 결과 (reuse-corruption 회귀 방어)
+        const fresh = createSearcher(DOCS, multiOpts).search("홍길동");
+        expect(r2.map((r) => r.item)).toEqual(fresh.map((r) => r.item));
     });
 
     it("4. per-field prebuilt target hydrate 경로", () => {
@@ -129,37 +130,60 @@ describe("createSearcher 멀티필드", () => {
         expect(s.search("제목")[0].item.title).toBe("멋진 제목");
     });
 
-    it("10. chosung:false 필드: 순방향 타이핑 세션이 title-only 매치를 잃지 않는다 (issue #35)", () => {
-        // id1 은 title(chosung:false)로만 "판결"에 관련, id2 는 name 이 ㅍ으로 시작.
-        // 초성-only "ㅍ" 은 chosung:false title 에서 gate-out → id1 미매치. 모음이 붙는 순간
-        // ("파") title 이 un-gate 되어 매치 집합이 커진다 → 세션 재사용이 unsound.
+    it("10. 순방향 타이핑 단조 narrowing: 각 단계가 직전의 부분집합 (issue #36)", () => {
+        // id1 은 title 로만 "판결"에 관련, id2 는 name 이 ㅍ 으로 시작.
+        // 예전 chosung:false gate 는 "ㅍ"→"파" 전이에서 title 을 un-gate 해 매치 집합을 키웠다.
+        // 옵션 제거로 gate 자체가 사라져 순방향 타이핑은 단조 축소만 한다.
         const docs = [
             { id: 1, title: "판결이 동일한", name: "아무개" },
             { id: 2, title: "무관한 제목", name: "표범수" },
         ];
         const opts: MultiFieldSearcherOptions<(typeof docs)[number]> = {
-            fields: [
-                { key: (d) => d.title, chosung: false },
-                { key: (d) => d.name, chosung: true },
-            ],
+            fields: [{ key: (d) => d.title }, { key: (d) => d.name }],
             whitespace: "split",
         };
 
         const s = createSearcher(docs, opts);
-        const forward = ["ㅍ", "파", "판", "판결"].map((q) =>
+        const idSets = ["ㅍ", "파", "판", "판결"].map((q) =>
             s
                 .search(q)
                 .map((r) => r.item.id)
                 .sort(),
         );
+
+        // 모든 단계에서 결과 id 집합이 직전 단계의 부분집합 (단조 축소)
+        for (let i = 1; i < idSets.length; i++) {
+            const prev = new Set(idSets[i - 1]);
+            expect(idSets[i].every((id) => prev.has(id))).toBe(true);
+        }
+
+        // 최종 결과가 fresh searcher 의 search("판결") 과 동일 (세션 재사용 경로 정확성)
         const fresh = createSearcher(docs, opts)
             .search("판결")
             .map((r) => r.item.id)
             .sort();
-
+        expect(idSets.at(-1)).toEqual(fresh);
         expect(fresh).toEqual([1]);
-        // 순방향 타이핑 세션이 fresh 와 동일한 최종 결과를 낸다.
-        expect(forward.at(-1)).toEqual(fresh);
-        expect(forward.at(-1)).toContain(1);
+    });
+
+    it("11. scoring config 캐시: entry당 필드마다 1회, 검색은 재호출 안 함 (issue #37)", () => {
+        let calls = 0;
+        const scoring = () => {
+            calls++;
+            return {};
+        };
+        const F = 2; // multiOpts 는 2필드
+        const s = createSearcher(DOCS, { ...multiOpts, scoring });
+        expect(calls).toBe(DOCS.length * F); // N items × F fields → N×F회
+
+        s.search("홍");
+        s.search("계약");
+        expect(calls).toBe(DOCS.length * F); // search 후 증가 없음
+
+        s.add({ title: "추가 문서", creator: "저자" });
+        expect(calls).toBe((DOCS.length + 1) * F); // add → +F
+
+        s.replaceAll([DOCS[0]]);
+        expect(calls).toBe((DOCS.length + 1) * F + 1 * F); // replaceAll(M) → +M×F
     });
 });

@@ -64,28 +64,26 @@ describe("matchFields", () => {
         expect(r?.perField[1]).not.toBeNull();
     });
 
-    it("6. chosung 스코프 (토큰 단위)", () => {
+    it("6. 초성-only 토큰: gate 없이 모든 필드에서 후보 (chosung 옵션 제거, issue #36)", () => {
         const chosungTok = split("ㅎㄱㄷ");
 
-        // creator 만 chosung:true → creator 귀속
-        const r1 = matchFields(chosungTok, [
-            { target: title, chosung: false },
-            { target: creator, chosung: true },
-        ]);
+        // gate 가 없으므로 초성-only 토큰도 모든 필드에서 후보. creator(홍길동)에 초성 매치되고
+        // weighted argmax 로 귀속된다. title 엔 ㅎㄱㄷ 초성 시퀀스가 없어 miss.
+        const r1 = matchFields(chosungTok, [{ target: title }, { target: creator }]);
         expect(r1).not.toBeNull();
         expect(r1?.perField[0]).toBeNull();
         expect(r1?.perField[1]).not.toBeNull();
 
-        // 두 필드 다 chosung:false → 후보 0 → null
-        const r2 = matchFields(chosungTok, [
-            { target: title, chosung: false },
-            { target: creator, chosung: false },
-        ]);
-        expect(r2).toBeNull();
+        // 기존 r2(양쪽 chosung:false → null) 대체: gate 제거로 이제 non-null 매치가 된다.
+        // 필드 순서를 뒤집어(creator=필드0) argmax 귀속이 순서 무관하게 성립하는지도 함께 검증.
+        const r2 = matchFields(chosungTok, [{ target: creator }, { target: title }]);
+        expect(r2).not.toBeNull();
+        expect(r2?.perField[0]).not.toBeNull(); // creator(필드0)에 귀속
+        expect(r2?.perField[1]).toBeNull(); // title 은 여전히 miss
 
-        // 혼합 토큰(모음 포함)은 chosung:false 여도 매치 (초성 토큰 아님)
+        // 혼합 토큰(모음 포함)도 정상 매치
         const mixed = split("홍ㄱ");
-        const r3 = matchFields(mixed, [{ target: creator, chosung: false }]);
+        const r3 = matchFields(mixed, [{ target: creator }]);
         expect(r3).not.toBeNull();
         expect(r3?.perField[0]).not.toBeNull();
     });
