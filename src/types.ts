@@ -310,3 +310,52 @@ export interface Searcher<T = string> {
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;
 }
+
+/**
+ * 멀티필드 searcher의 필드 정의. `key` 또는 `target` 중 하나 필수 (런타임 TypeError).
+ */
+export type SearcherFieldSpec<T> = {
+    /** 아이템에서 이 필드의 검색 키 문자열을 추출한다. */
+    key?: (item: T) => string;
+    /** prebuilt Target 공급 (필드별 영속화 hydrate 경로 — 단일 필드 `SearcherOptions.target`의 대응물). 주면 `key` 불필요. */
+    target?: (item: T) => Target;
+    /** 필드 가중치 (기본 1). 0 이하이면 RangeError. */
+    weight?: number;
+    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. */
+    chosung?: boolean;
+};
+
+/**
+ * 멀티필드 모드 `createSearcher` 옵션. `fields`가 있으면 멀티필드 모드로 분기한다.
+ * `key`/`target`과 상호 배타 (동시 지정 시 TypeError).
+ */
+export type MultiFieldSearcherOptions<T> = {
+    /** 필드 정의 배열 (비어 있으면 TypeError). */
+    fields: SearcherFieldSpec<T>[];
+    /** 엄격 매칭 모드. 기본 `false`. @see {@link SearcherOptions.strict} */
+    strict?: boolean;
+    /** 쿼리 공백 처리 정책. 기본 `"ignore"`. @see {@link WhitespaceMode} */
+    whitespace?: WhitespaceMode;
+    /** DP 가중치 / per-grapheme bonus. 모든 필드에 공통 적용된다. */
+    scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
+    /** 아이템 간 최종 정렬용 score 함수. 미지정 시 `FieldsMatchResult.score`. */
+    score?: (result: FieldsMatchResult, targets: Target[]) => number;
+};
+
+/** 멀티필드 검색 결과 한 건. */
+export type MultiFieldSearchResult<T> = {
+    item: T;
+    /** 정렬에 사용된 최종 score (weighted 또는 `score` 콜백 결과). */
+    score: number;
+    /** 토큰 단위 cross-field 매칭 결과 (raw perField 포함). */
+    result: FieldsMatchResult;
+    /** 필드별 하이라이트 접근. 귀속 토큰이 없는 필드의 `result`는 null, `ranges()`는 `[]`. */
+    fields: { target: Target; result: MatchResult | null; ranges: () => MatchRange[] }[];
+};
+
+export interface MultiFieldSearcher<T> {
+    search(queryInput: string, options?: SearchResultOptions): MultiFieldSearchResult<T>[];
+    add(...items: T[]): void;
+    remove(predicate: (item: T) => boolean): void;
+    replaceAll(items: readonly T[]): void;
+}
