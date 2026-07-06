@@ -165,6 +165,27 @@ export type MatchRange = {
     end: number;
 };
 
+/** `matchFields`에 넘기는 필드 하나. */
+export type MatchField = {
+    target: Target;
+    /** 필드 가중치 (기본 1). 0 이하이면 RangeError. 스코어가 음수면 곱셈 대신 나눗셈이 적용된다 (부호 보존). */
+    weight?: number;
+    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. 혼합 토큰은 영향 없음. */
+    chosung?: boolean;
+};
+
+/** `matchFields`의 반환값. */
+export type FieldsMatchResult = {
+    /** Σ over tokens of (부호 보존 weighted best-field score) */
+    score: number;
+    /**
+     * 필드 i에 argmax로 귀속된 토큰들의 merged MatchResult. 귀속 토큰이 없으면 null.
+     * merged score는 raw(비가중) 합. runCount/boundaryHits는 Σ, startsAtZero는 OR,
+     * indices는 union sort dedup — matchBestSplit 합성과 동일 규칙.
+     */
+    perField: (MatchResult | null)[];
+};
+
 /**
  * 스코어링 가중치.
  *
