@@ -334,6 +334,97 @@ describe("createSearcher", () => {
         });
     });
 
+    describe("split 세션 재사용 (커밋 1)", () => {
+        // scoring 을 함수로 넘기면 스캔하는 entry 마다 1회 호출 → 스캔 수 관찰용 스파이.
+        const makeSpy = () => {
+            let calls = 0;
+            const scoring = () => {
+                calls++;
+                return {};
+            };
+            return { scoring, count: () => calls };
+        };
+
+        const JEMOK = ["멋진 제목", "제목 없음", "제목 멋짐", "다른 항목", "무관"];
+
+        it("split narrowing: 두 번째 스캔 수 = 첫 매치 수, 결과는 fresh 와 동일", () => {
+            const spy = makeSpy();
+            const searcher = createSearcher(JEMOK, { whitespace: "split", scoring: spy.scoring });
+
+            const r1 = searcher.search("제목");
+            const afterFirst = spy.count();
+            expect(afterFirst).toBe(JEMOK.length); // 첫 검색은 전체 스캔
+
+            const r2 = searcher.search("제목 멋");
+            const secondScans = spy.count() - afterFirst;
+            expect(secondScans).toBe(r1.length); // 재사용: 첫 매치만 재스캔
+
+            const fresh = createSearcher(JEMOK, { whitespace: "split" });
+            expect(r2.map((r) => r.item)).toEqual(fresh.search("제목 멋").map((r) => r.item));
+        });
+
+        it("dedup 재정렬 케이스도 재사용 성립", () => {
+            const items = ["안녕하세요", "안녕", "반갑", "안심"];
+            const spy = makeSpy();
+            const searcher = createSearcher(items, { whitespace: "split", scoring: spy.scoring });
+
+            const r1 = searcher.search("안녕 안"); // dedup → ["안녕"]
+            const afterFirst = spy.count();
+            expect(afterFirst).toBe(items.length);
+
+            const r2 = searcher.search("안녕 안녕하"); // dedup → ["안녕하"]
+            const secondScans = spy.count() - afterFirst;
+            expect(secondScans).toBe(r1.length);
+
+            const fresh = createSearcher(items, { whitespace: "split" });
+            expect(r2.map((r) => r.item)).toEqual(fresh.search("안녕 안녕하").map((r) => r.item));
+        });
+
+        it("토큰 중간 편집은 재사용 불성립 → 전체 재스캔", () => {
+            const spy = makeSpy();
+            const searcher = createSearcher(JEMOK, { whitespace: "split", scoring: spy.scoring });
+
+            searcher.search("제목 멋");
+            const afterFirst = spy.count();
+
+            const r2 = searcher.search("제묘 멋"); // 제목 → 제묘: 커버 안 됨
+            const secondScans = spy.count() - afterFirst;
+            expect(secondScans).toBe(JEMOK.length); // 전체 재스캔
+
+            const fresh = createSearcher(JEMOK, { whitespace: "split" });
+            expect(r2.map((r) => r.item)).toEqual(fresh.search("제묘 멋").map((r) => r.item));
+        });
+
+        it("토큰 병합은 재사용 불성립 (커버되지 않는 토큰)", () => {
+            const items = ["아나운서", "아이", "나비"];
+            const spy = makeSpy();
+            const searcher = createSearcher(items, { whitespace: "split", scoring: spy.scoring });
+
+            searcher.search("아 나"); // 토큰 [아, 나]
+            const afterFirst = spy.count();
+
+            const r2 = searcher.search("아나"); // 토큰 [아나] — "나" 미커버
+            const secondScans = spy.count() - afterFirst;
+            expect(secondScans).toBe(items.length);
+
+            const fresh = createSearcher(items, { whitespace: "split" });
+            expect(r2.map((r) => r.item)).toEqual(fresh.search("아나").map((r) => r.item));
+        });
+
+        it("동일 쿼리 재실행도 재사용", () => {
+            const spy = makeSpy();
+            const searcher = createSearcher(JEMOK, { whitespace: "split", scoring: spy.scoring });
+
+            const r1 = searcher.search("제목");
+            const afterFirst = spy.count();
+
+            const r2 = searcher.search("제목");
+            const secondScans = spy.count() - afterFirst;
+            expect(secondScans).toBe(r1.length);
+            expect(r2.map((r) => r.item)).toEqual(r1.map((r) => r.item));
+        });
+    });
+
     describe("prebuilt target (options.target)", () => {
         interface Doc {
             id: number;

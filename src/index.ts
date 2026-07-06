@@ -2,18 +2,25 @@ export { buildMatchRanges } from "./buildMatchRanges";
 export { buildQuery } from "./buildQuery";
 export { createSearcher } from "./createSearcher";
 export { matchBest, matchLiteral } from "./match";
-export { preprocessTarget } from "./preprocessTarget";
+export { matchFields } from "./matchFields";
+export { PREPROCESS_VERSION, preprocessTarget } from "./preprocessTarget";
 export { createGraphemeBonuses, defaultScore, SCORING } from "./score";
 export type {
     Atoms,
+    FieldsMatchResult,
     GraphemeIndices,
+    MatchField,
     MatchRange,
     MatchResult,
+    MultiFieldSearcher,
+    MultiFieldSearcherOptions,
+    MultiFieldSearchResult,
     Query,
     QueryGrapheme,
     ScoringConfig,
     ScoringWeights,
     Searcher,
+    SearcherFieldSpec,
     SearcherOptions,
     SearchOptions,
     SearchResult,

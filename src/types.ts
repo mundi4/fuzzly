@@ -66,8 +66,9 @@ export interface Query {
      * IME 입력 중 이전 쿼리의 atom prefix인지 판별하는 데 사용된다
      * (createSearcher의 세션 최적화).
      *
-     * `whitespace: "split"` 모드의 outer Query에서는 빈 문자열로 두어
-     * 세션 prefix reuse가 자동으로 비활성화된다.
+     * `whitespace: "split"` 모드의 outer Query에서는 빈 문자열이며,
+     * 세션 재사용은 `subQueries`의 토큰별 atoms로 판정한다
+     * (이전 각 토큰이 현재 어떤 토큰의 atom-prefix이면 재사용).
      */
     atoms: string;
     /** 이 Query가 빌드된 공백 처리 모드 */
@@ -162,6 +163,27 @@ export type MatchRange = {
     start: number;
     /** 범위 끝 (exclusive, UTF-16 offset) */
     end: number;
+};
+
+/** `matchFields`에 넘기는 필드 하나. */
+export type MatchField = {
+    target: Target;
+    /** 필드 가중치 (기본 1). 0 이하이면 RangeError. 스코어가 음수면 곱셈 대신 나눗셈이 적용된다 (부호 보존). */
+    weight?: number;
+    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. 혼합 토큰은 영향 없음. */
+    chosung?: boolean;
+};
+
+/** `matchFields`의 반환값. */
+export type FieldsMatchResult = {
+    /** Σ over tokens of (부호 보존 weighted best-field score) */
+    score: number;
+    /**
+     * 필드 i에 argmax로 귀속된 토큰들의 merged MatchResult. 귀속 토큰이 없으면 null.
+     * merged score는 raw(비가중) 합. runCount/boundaryHits는 Σ, startsAtZero는 OR,
+     * indices는 union sort dedup — matchBestSplit 합성과 동일 규칙.
+     */
+    perField: (MatchResult | null)[];
 };
 
 /**
@@ -284,6 +306,55 @@ export type SearchResult<T = string> = {
 
 export interface Searcher<T = string> {
     search(queryInput: string, options?: SearchResultOptions): SearchResult<T>[];
+    add(...items: T[]): void;
+    remove(predicate: (item: T) => boolean): void;
+    replaceAll(items: readonly T[]): void;
+}
+
+/**
+ * 멀티필드 searcher의 필드 정의. `key` 또는 `target` 중 하나 필수 (런타임 TypeError).
+ */
+export type SearcherFieldSpec<T> = {
+    /** 아이템에서 이 필드의 검색 키 문자열을 추출한다. */
+    key?: (item: T) => string;
+    /** prebuilt Target 공급 (필드별 영속화 hydrate 경로 — 단일 필드 `SearcherOptions.target`의 대응물). 주면 `key` 불필요. */
+    target?: (item: T) => Target;
+    /** 필드 가중치 (기본 1). 0 이하이면 RangeError. */
+    weight?: number;
+    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. */
+    chosung?: boolean;
+};
+
+/**
+ * 멀티필드 모드 `createSearcher` 옵션. `fields`가 있으면 멀티필드 모드로 분기한다.
+ * `key`/`target`과 상호 배타 (동시 지정 시 TypeError).
+ */
+export type MultiFieldSearcherOptions<T> = {
+    /** 필드 정의 배열 (비어 있으면 TypeError). */
+    fields: SearcherFieldSpec<T>[];
+    /** 엄격 매칭 모드. 기본 `false`. @see {@link SearcherOptions.strict} */
+    strict?: boolean;
+    /** 쿼리 공백 처리 정책. 기본 `"ignore"`. @see {@link WhitespaceMode} */
+    whitespace?: WhitespaceMode;
+    /** DP 가중치 / per-grapheme bonus. 모든 필드에 공통 적용된다. */
+    scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
+    /** 아이템 간 최종 정렬용 score 함수. 미지정 시 `FieldsMatchResult.score`. */
+    score?: (result: FieldsMatchResult, targets: Target[]) => number;
+};
+
+/** 멀티필드 검색 결과 한 건. */
+export type MultiFieldSearchResult<T> = {
+    item: T;
+    /** 정렬에 사용된 최종 score (weighted 또는 `score` 콜백 결과). */
+    score: number;
+    /** 토큰 단위 cross-field 매칭 결과 (raw perField 포함). */
+    result: FieldsMatchResult;
+    /** 필드별 하이라이트 접근. 귀속 토큰이 없는 필드의 `result`는 null, `ranges()`는 `[]`. */
+    fields: { target: Target; result: MatchResult | null; ranges: () => MatchRange[] }[];
+};
+
+export interface MultiFieldSearcher<T> {
+    search(queryInput: string, options?: SearchResultOptions): MultiFieldSearchResult<T>[];
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;
