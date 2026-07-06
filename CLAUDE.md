@@ -160,7 +160,7 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 옵션 분리 (옵션 위치 = 의미):
 
-- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
+- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`, `tiebreakKey`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
 - `SearchResultOptions` (per-call): `limit`, `literal`. search 단위로만 의미 있는 옵션.
 - `SearchOptions` 는 `SearchResultOptions` 의 alias (deprecated).
 
@@ -170,6 +170,7 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 - `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`)
 - `SearcherOptions.strict?: boolean` (기본 `false`)
+- `SearcherOptions.tiebreakKey?: (item) => number` — score 동점 시 2차 정렬 키. 순서는 **score desc → tiebreakKey asc**. entry 생성 시 1회 평가·캐시. limit(heap) 경로의 eviction 판정도 `(score, tie)` 비교라 top-N이 결정적. `(score, tie)` 완전 동점 항목의 top-N **진입**은 unspecified이나 반환 **순서**는 결정적. 멀티필드도 동일.
 
 ## Conventions
 

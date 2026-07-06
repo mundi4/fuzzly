@@ -21,21 +21,30 @@ import type {
 } from "./types";
 
 // ---------------------------------------------------------------------------
-// Min-heap (score 오름차순) — limit > 0일 때 상위 N개만 유지
+// Min-heap — limit > 0일 때 상위 N개만 유지.
+// 정렬 순서는 score desc → tie asc 이므로, heap root 는 top-N 중 "최악"
+// (최저 score, 동점이면 최대 tie) 을 유지한다. worse(a,b) = a가 b보다 하위 랭크.
 // ---------------------------------------------------------------------------
 
-function heapPush<S extends { score?: number }>(heap: S[], item: S): void {
+type Ranked<R> = { score: number; tie: number; value: R };
+
+// a 가 b 보다 하위 랭크(더 나쁨)이면 true. score 낮을수록, 동점이면 tie 클수록 하위.
+function worse(a: { score: number; tie: number }, b: { score: number; tie: number }): boolean {
+    return a.score < b.score || (a.score === b.score && a.tie > b.tie);
+}
+
+function heapPush<R>(heap: Ranked<R>[], item: Ranked<R>): void {
     heap.push(item);
     let i = heap.length - 1;
     while (i > 0) {
         const parent = (i - 1) >> 1;
-        if ((heap[parent].score ?? 0) <= (heap[i].score ?? 0)) break;
+        if (!worse(heap[i], heap[parent])) break; // 자식이 부모보다 나쁘지 않으면 min-heap 불변 성립
         [heap[parent], heap[i]] = [heap[i], heap[parent]];
         i = parent;
     }
 }
 
-function heapReplace<S extends { score?: number }>(heap: S[], item: S): void {
+function heapReplace<R>(heap: Ranked<R>[], item: Ranked<R>): void {
     heap[0] = item;
     const n = heap.length;
     let i = 0;
@@ -43,12 +52,17 @@ function heapReplace<S extends { score?: number }>(heap: S[], item: S): void {
         let smallest = i;
         const l = 2 * i + 1;
         const r = 2 * i + 2;
-        if (l < n && (heap[l].score ?? 0) < (heap[smallest].score ?? 0)) smallest = l;
-        if (r < n && (heap[r].score ?? 0) < (heap[smallest].score ?? 0)) smallest = r;
+        if (l < n && worse(heap[l], heap[smallest])) smallest = l;
+        if (r < n && worse(heap[r], heap[smallest])) smallest = r;
         if (smallest === i) break;
         [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
         i = smallest;
     }
+}
+
+// 최종 정렬 comparator: score desc, 동점이면 tie asc.
+function byRank(a: { score: number; tie: number }, b: { score: number; tie: number }): number {
+    return b.score - a.score || a.tie - b.tie;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +73,16 @@ function heapReplace<S extends { score?: number }>(heap: S[], item: S): void {
 // 첫 호출 시 한 번만 검사 후 캐시 (중복 경고 방지). 프로덕션 빌드는 NODE_ENV === "production" 면 스킵.
 // ---------------------------------------------------------------------------
 
-const SEARCHER_ONLY_KEYS = new Set(["key", "target", "fields", "strict", "whitespace", "scoring", "score"]);
+const SEARCHER_ONLY_KEYS = new Set([
+    "key",
+    "target",
+    "fields",
+    "strict",
+    "whitespace",
+    "scoring",
+    "score",
+    "tiebreakKey",
+]);
 const SEARCH_ONLY_KEYS = new Set(["limit", "literal"]);
 
 const isProd = (() => {
@@ -107,7 +130,7 @@ type Runtime<T, R> = {
  */
 type Evaluate<E, R> = (entry: E, query: Query | null, queryInput: string) => { score: number; make: () => R } | null;
 
-function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
+function makeRuntime<T, E extends { item: T; tie: number }, R>(
     items: readonly T[],
     toEntry: (item: T) => E,
     whitespace: WhitespaceMode,
@@ -161,37 +184,39 @@ function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
             let results: R[];
 
             if (limit > 0) {
-                const heap: R[] = [];
-                let minScore = -Infinity;
+                const heap: Ranked<R>[] = [];
 
                 for (const i of scan) {
                     const ev = evaluate(entries[i], query, queryInput);
                     if (ev === null) continue;
 
                     matchedIndices.push(i);
+                    const tie = entries[i].tie;
 
                     if (heap.length < limit) {
-                        heapPush(heap, ev.make());
-                        if (heap.length === limit) minScore = heap[0].score ?? 0;
-                    } else if (ev.score > minScore) {
-                        heapReplace(heap, ev.make());
-                        minScore = heap[0].score ?? 0;
+                        heapPush(heap, { score: ev.score, tie, value: ev.make() });
+                    } else {
+                        // full heap: root 가 top-N 중 최악. 후보가 root 보다 상위 랭크면 교체.
+                        const root = heap[0];
+                        if (ev.score > root.score || (ev.score === root.score && tie < root.tie)) {
+                            heapReplace(heap, { score: ev.score, tie, value: ev.make() });
+                        }
                     }
                 }
 
-                results = heap.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+                results = heap.sort(byRank).map((w) => w.value);
             } else {
-                results = [];
+                const collected: Ranked<R>[] = [];
 
                 for (const i of scan) {
                     const ev = evaluate(entries[i], query, queryInput);
                     if (ev === null) continue;
 
                     matchedIndices.push(i);
-                    results.push(ev.make());
+                    collected.push({ score: ev.score, tie: entries[i].tie, value: ev.make() });
                 }
 
-                results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+                results = collected.sort(byRank).map((w) => w.value);
             }
 
             prevTokens = currentTokens;
@@ -274,8 +299,9 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
     const resolveScoringConfig: ((target: Target) => ScoringConfig) | undefined =
         typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
     const scoreFn = options.score;
+    const tiebreakKey = options.tiebreakKey;
 
-    const evaluate: Evaluate<{ item: T; target: Target; scoring?: ScoringConfig }, SearchResult<T>> = (
+    const evaluate: Evaluate<{ item: T; target: Target; scoring?: ScoringConfig; tie: number }, SearchResult<T>> = (
         entry,
         query,
         queryInput,
@@ -295,12 +321,12 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
         };
     };
 
-    // scoring 함수는 entry 생성 시(생성/add/replaceAll) target당 1회 resolve 되어 캐시된다.
+    // scoring/tiebreakKey 는 entry 생성 시(생성/add/replaceAll) 아이템당 1회 평가되어 캐시된다.
     return makeRuntime(
         items,
         (item) => {
             const target = toTarget(item);
-            return { item, target, scoring: resolveScoringConfig?.(target) };
+            return { item, target, scoring: resolveScoringConfig?.(target), tie: tiebreakKey ? tiebreakKey(item) : 0 };
         },
         whitespace,
         evaluate,
@@ -344,6 +370,7 @@ function createMultiFieldSearcher<T>(
     const whitespace = options.whitespace ?? "ignore";
     const scoringOpt = options.scoring;
     const scoreFn = options.score;
+    const tiebreakKey = options.tiebreakKey;
 
     // 함수형 scoring 은 entry 생성 시 target당 1회 resolve 해 캐시한다 (매 검색 재계산 회피).
     // 객체형은 공유 상수 하나로 충분 (entry 저장 불필요).
@@ -355,11 +382,10 @@ function createMultiFieldSearcher<T>(
     const placeholder = preprocessTarget("");
     const fieldBuf: MatchField[] = fields.map((f) => ({ target: placeholder, weight: f.weight }));
 
-    const evaluate: Evaluate<{ item: T; targets: Target[]; scorings?: ScoringConfig[] }, MultiFieldSearchResult<T>> = (
-        entry,
-        query,
-        queryInput,
-    ) => {
+    const evaluate: Evaluate<
+        { item: T; targets: Target[]; scorings?: ScoringConfig[]; tie: number },
+        MultiFieldSearchResult<T>
+    > = (entry, query, queryInput) => {
         const targets = entry.targets;
         let result: FieldsMatchResult | null;
 
@@ -394,7 +420,12 @@ function createMultiFieldSearcher<T>(
         items,
         (item) => {
             const targets = toTargets.map((tt) => tt(item));
-            return { item, targets, scorings: scoringFn ? targets.map((t) => scoringFn(t)) : undefined };
+            return {
+                item,
+                targets,
+                scorings: scoringFn ? targets.map((t) => scoringFn(t)) : undefined,
+                tie: tiebreakKey ? tiebreakKey(item) : 0,
+            };
         },
         whitespace,
         evaluate,

@@ -285,6 +285,15 @@ export type SearcherOptions<T = string> = {
      * caller가 score 의미를 직접 정의하고 싶을 때 사용 (예: `defaultScore`).
      */
     score?: (result: MatchResult, target: Target) => number;
+    /**
+     * score 동점 시 2차 정렬 키 (**asc**). 정렬 순서는 `score desc → tiebreakKey asc`이며,
+     * score가 다르면 무시된다. 미지정 시 기존 동작(내부 tie=0). entry 생성 시(searcher 생성 /
+     * `add` / `replaceAll`) 아이템당 1회 평가되어 캐시된다 — item 불변 가정.
+     *
+     * `(score, tie)` 완전 동점 항목들 사이에서 `limit` 경계의 top-N **진입**은 미지정(unspecified)이나,
+     * 반환된 결과의 **순서**는 항상 결정적이다.
+     */
+    tiebreakKey?: (item: T) => number;
 };
 
 /**
@@ -347,6 +356,12 @@ export type MultiFieldSearcherOptions<T> = {
     scoring?: ScoringConfig | ((target: Target) => ScoringConfig);
     /** 아이템 간 최종 정렬용 score 함수. 미지정 시 `FieldsMatchResult.score`. */
     score?: (result: FieldsMatchResult, targets: Target[]) => number;
+    /**
+     * score 동점 시 2차 정렬 키 (**asc**). 정렬 순서는 `score desc → tiebreakKey asc`이며,
+     * score가 다르면 무시된다. 미지정 시 기존 동작. entry 생성 시 아이템당 1회 평가되어 캐시된다.
+     * @see {@link SearcherOptions.tiebreakKey}
+     */
+    tiebreakKey?: (item: T) => number;
 };
 
 /** 멀티필드 검색 결과 한 건. */
