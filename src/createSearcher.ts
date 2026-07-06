@@ -56,8 +56,9 @@ const SEARCH_ONLY_KEYS = new Set(["limit", "literal"]);
 
 const isProd = (() => {
     try {
-        // biome-ignore lint/complexity/useLiteralKeys: process 가 존재하지 않을 수 있으므로 동적 접근
-        return typeof process !== "undefined" && process.env && process.env["NODE_ENV"] === "production";
+        // globalThis 경유로 접근해 @types/node 없이도 타입체크된다 (브라우저 소비자 tsc 호환)
+        const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
+        return g.process?.env?.NODE_ENV === "production";
     } catch {
         return false;
     }
