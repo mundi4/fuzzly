@@ -128,14 +128,15 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
         target: toTarget(item),
     }));
 
-    // 세션 상태: 이전 쿼리의 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
+    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
+    // split 모드는 토큰(subQuery)마다 atoms 를 가지므로 문자열 배열로 보관한다.
     // strict/whitespace 는 SearcherOptions 에서 고정되므로 세션 비교에서 제외.
-    let prevAtoms = "";
+    let prevTokens: string[] = [];
     let prevLiteral = false;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
-        prevAtoms = "";
+        prevTokens = [];
         prevLiteral = false;
         prevMatchedIndices = null;
     }
@@ -148,18 +149,25 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
             const currentLiteral = !!searchOpts.literal;
 
             const query = currentLiteral ? null : buildQuery(queryInput, { whitespace });
-            const currentAtoms = query ? query.atoms : queryInput.toLowerCase();
 
-            // literal 모드 토글 시 세션 단절. atoms prefix 확장이면 prev 매치만 재스캔.
+            // 세션 재사용 판정용 토큰 atoms. split 모드는 각 subQuery 의 atoms,
+            // 그 외는 쿼리 통째 1토큰, literal 은 소문자 입력 1토큰.
+            const currentTokens: string[] = currentLiteral
+                ? [queryInput.toLowerCase()]
+                : query?.subQueries
+                  ? query.subQueries.map((s) => s.atoms)
+                  : [query ? query.atoms : ""];
+
+            // literal 모드 토글 시 세션 단절.
+            // 이전 모든 토큰이 각각 어떤 현재 토큰의 atom-prefix 이면 매치 집합은 단조 축소 →
+            // 이전 매치만 재스캔. 동일 쿼리 재실행(prefix == 자기 자신)도 안전하게 재사용.
             const flagsCompatible = prevLiteral === currentLiteral;
-            const sessionIndices =
-                prevAtoms.length > 0 &&
-                currentAtoms.length > prevAtoms.length &&
-                currentAtoms.startsWith(prevAtoms) &&
+            const canReuse =
+                prevTokens.length > 0 &&
+                prevTokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p))) &&
                 flagsCompatible &&
-                prevMatchedIndices !== null
-                    ? prevMatchedIndices
-                    : null;
+                prevMatchedIndices !== null;
+            const sessionIndices = canReuse ? prevMatchedIndices : null;
 
             const matchedIndices: number[] = [];
 
@@ -214,7 +222,7 @@ export function createSearcher<T>(items: readonly T[], options: SearcherOptions<
                 results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
             }
 
-            prevAtoms = currentAtoms;
+            prevTokens = currentTokens;
             prevLiteral = currentLiteral;
             prevMatchedIndices = matchedIndices;
 

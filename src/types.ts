@@ -66,8 +66,9 @@ export interface Query {
      * IME 입력 중 이전 쿼리의 atom prefix인지 판별하는 데 사용된다
      * (createSearcher의 세션 최적화).
      *
-     * `whitespace: "split"` 모드의 outer Query에서는 빈 문자열로 두어
-     * 세션 prefix reuse가 자동으로 비활성화된다.
+     * `whitespace: "split"` 모드의 outer Query에서는 빈 문자열이며,
+     * 세션 재사용은 `subQueries`의 토큰별 atoms로 판정한다
+     * (이전 각 토큰이 현재 어떤 토큰의 atom-prefix이면 재사용).
      */
     atoms: string;
     /** 이 Query가 빌드된 공백 처리 모드 */
