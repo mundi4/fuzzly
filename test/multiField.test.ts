@@ -14,7 +14,7 @@ const DOCS: Doc[] = [
 ];
 
 const multiOpts: MultiFieldSearcherOptions<Doc> = {
-    fields: [{ key: (d) => d.title }, { key: (d) => d.creator, weight: 1.2, chosung: true }],
+    fields: [{ key: (d) => d.title }, { key: (d) => d.creator, weight: 1.2 }],
     whitespace: "split",
 };
 
@@ -129,37 +129,39 @@ describe("createSearcher 멀티필드", () => {
         expect(s.search("제목")[0].item.title).toBe("멋진 제목");
     });
 
-    it("10. chosung:false 필드: 순방향 타이핑 세션이 title-only 매치를 잃지 않는다 (issue #35)", () => {
-        // id1 은 title(chosung:false)로만 "판결"에 관련, id2 는 name 이 ㅍ으로 시작.
-        // 초성-only "ㅍ" 은 chosung:false title 에서 gate-out → id1 미매치. 모음이 붙는 순간
-        // ("파") title 이 un-gate 되어 매치 집합이 커진다 → 세션 재사용이 unsound.
+    it("10. 순방향 타이핑 단조 narrowing: 각 단계가 직전의 부분집합 (issue #36)", () => {
+        // id1 은 title 로만 "판결"에 관련, id2 는 name 이 ㅍ 으로 시작.
+        // 예전 chosung:false gate 는 "ㅍ"→"파" 전이에서 title 을 un-gate 해 매치 집합을 키웠다.
+        // 옵션 제거로 gate 자체가 사라져 순방향 타이핑은 단조 축소만 한다.
         const docs = [
             { id: 1, title: "판결이 동일한", name: "아무개" },
             { id: 2, title: "무관한 제목", name: "표범수" },
         ];
         const opts: MultiFieldSearcherOptions<(typeof docs)[number]> = {
-            fields: [
-                { key: (d) => d.title, chosung: false },
-                { key: (d) => d.name, chosung: true },
-            ],
+            fields: [{ key: (d) => d.title }, { key: (d) => d.name }],
             whitespace: "split",
         };
 
         const s = createSearcher(docs, opts);
-        const forward = ["ㅍ", "파", "판", "판결"].map((q) =>
+        const idSets = ["ㅍ", "파", "판", "판결"].map((q) =>
             s
                 .search(q)
                 .map((r) => r.item.id)
                 .sort(),
         );
+
+        // 모든 단계에서 결과 id 집합이 직전 단계의 부분집합 (단조 축소)
+        for (let i = 1; i < idSets.length; i++) {
+            const prev = new Set(idSets[i - 1]);
+            expect(idSets[i].every((id) => prev.has(id))).toBe(true);
+        }
+
+        // 최종 결과가 fresh searcher 의 search("판결") 과 동일 (세션 재사용 경로 정확성)
         const fresh = createSearcher(docs, opts)
             .search("판결")
             .map((r) => r.item.id)
             .sort();
-
+        expect(idSets.at(-1)).toEqual(fresh);
         expect(fresh).toEqual([1]);
-        // 순방향 타이핑 세션이 fresh 와 동일한 최종 결과를 낸다.
-        expect(forward.at(-1)).toEqual(fresh);
-        expect(forward.at(-1)).toContain(1);
     });
 });

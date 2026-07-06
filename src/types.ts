@@ -170,8 +170,6 @@ export type MatchField = {
     target: Target;
     /** 필드 가중치 (기본 1). 0 이하이면 RangeError. 스코어가 음수면 곱셈 대신 나눗셈이 적용된다 (부호 보존). */
     weight?: number;
-    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. 혼합 토큰은 영향 없음. */
-    chosung?: boolean;
 };
 
 /** `matchFields`의 반환값. */
@@ -321,8 +319,6 @@ export type SearcherFieldSpec<T> = {
     target?: (item: T) => Target;
     /** 필드 가중치 (기본 1). 0 이하이면 RangeError. */
     weight?: number;
-    /** false면 초성-only 토큰이 이 필드에 매치되지 않는다 (hard filter). 기본 true. */
-    chosung?: boolean;
 };
 
 /**
