@@ -46,22 +46,23 @@ describe("createSearcher 멀티필드", () => {
         expect(r[0].item.creator).toBe("계약왕"); // weight 10 필드로 매치된 쪽이 상위
     });
 
-    it("3. 세션 narrowing: 두 번째 스캔이 첫 매치로 좁혀짐", () => {
+    it("3. 세션 narrowing: 재사용 경로가 fresh 와 동일 + scoring 캐시 (issue #37)", () => {
         let calls = 0;
         const scoring = () => {
             calls++;
             return {};
         };
         const s = createSearcher(DOCS, { ...multiOpts, scoring });
-        const F = 2; // 필드 수 — matchFields 는 필드당 1회 scoring resolve
+        const F = 2; // 필드 수 — 멀티필드는 entry당 필드 target마다 1회 resolve
+        expect(calls).toBe(DOCS.length * F); // 생성 시 캐시 (매 검색 아님)
 
-        const r1 = s.search("홍");
-        const afterFirst = calls;
-        expect(afterFirst).toBe(DOCS.length * F);
+        s.search("홍");
+        const r2 = s.search("홍길동"); // "홍" atom-prefix → 세션 재사용
+        expect(calls).toBe(DOCS.length * F); // 검색은 scoring 을 재호출하지 않는다
 
-        s.search("홍길동"); // "홍" atom-prefix → 재사용
-        const secondScans = (calls - afterFirst) / F;
-        expect(secondScans).toBe(r1.length);
+        // 재사용 경로가 fresh searcher 와 동일 결과 (reuse-corruption 회귀 방어)
+        const fresh = createSearcher(DOCS, multiOpts).search("홍길동");
+        expect(r2.map((r) => r.item)).toEqual(fresh.map((r) => r.item));
     });
 
     it("4. per-field prebuilt target hydrate 경로", () => {
@@ -163,5 +164,26 @@ describe("createSearcher 멀티필드", () => {
             .sort();
         expect(idSets.at(-1)).toEqual(fresh);
         expect(fresh).toEqual([1]);
+    });
+
+    it("11. scoring config 캐시: entry당 필드마다 1회, 검색은 재호출 안 함 (issue #37)", () => {
+        let calls = 0;
+        const scoring = () => {
+            calls++;
+            return {};
+        };
+        const F = 2; // multiOpts 는 2필드
+        const s = createSearcher(DOCS, { ...multiOpts, scoring });
+        expect(calls).toBe(DOCS.length * F); // N items × F fields → N×F회
+
+        s.search("홍");
+        s.search("계약");
+        expect(calls).toBe(DOCS.length * F); // search 후 증가 없음
+
+        s.add({ title: "추가 문서", creator: "저자" });
+        expect(calls).toBe((DOCS.length + 1) * F); // add → +F
+
+        s.replaceAll([DOCS[0]]);
+        expect(calls).toBe((DOCS.length + 1) * F + 1 * F); // replaceAll(M) → +M×F
     });
 });

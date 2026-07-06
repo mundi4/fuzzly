@@ -121,6 +121,8 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 핵심 포인트: anchorFill은 Σ(atoms²) 스케일이라 한 anchor에 atom이 몰린 완전 매치가 이 항 기준으로 유리하다. 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
 
+**scoring config 캐시 계약 (issue #37)**: `SearcherOptions.scoring`/`MultiFieldSearcherOptions.scoring`이 함수 형태(`(target) => ScoringConfig`)이면 **entry 생성 시점(searcher 생성 / `add` / `replaceAll`)에 entry당(멀티필드는 필드 target당) 1회** 평가되어 캐시된다 — 매 search가 아니다. 따라서 scoring 함수는 **target만의 순수함수**여야 한다 (`createGraphemeBonuses` 같은 per-target 비용은 키스트로크마다 재계산되지 않는다). 캐시는 searcher 계층(`createSearcher`)의 책임이며, `matchBest`/`matchFields`를 직접 호출하는 low-level 경로는 기존대로 호출 시점에 resolve한다. 멀티필드는 pre-resolved config를 `MatchField.scoring`으로 전달하며, 이는 `matchFields`의 `opts.scoring`보다 우선한다.
+
 ### 멀티필드 매칭 (`matchFields.ts`)
 
 하나의 (split) 쿼리를 여러 필드(Target)에 대해 **토큰 단위 cross-field AND**로 매칭한다. split 위에 서므로

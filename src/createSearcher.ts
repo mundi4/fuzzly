@@ -275,11 +275,13 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
         typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : undefined;
     const scoreFn = options.score;
 
-    const evaluate: Evaluate<{ item: T; target: Target }, SearchResult<T>> = (entry, query, queryInput) => {
+    const evaluate: Evaluate<{ item: T; target: Target; scoring?: ScoringConfig }, SearchResult<T>> = (
+        entry,
+        query,
+        queryInput,
+    ) => {
         const t = entry.target;
-        const result = query
-            ? matchBest(query, t, resolveScoringConfig ? resolveScoringConfig(t) : undefined, strict)
-            : matchLiteral(queryInput, t);
+        const result = query ? matchBest(query, t, entry.scoring, strict) : matchLiteral(queryInput, t);
         if (result === null) return null;
 
         const score = scoreFn ? scoreFn(result, t) : (result.score ?? 0);
@@ -293,7 +295,16 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
         };
     };
 
-    return makeRuntime(items, (item) => ({ item, target: toTarget(item) }), whitespace, evaluate);
+    // scoring 함수는 entry 생성 시(생성/add/replaceAll) target당 1회 resolve 되어 캐시된다.
+    return makeRuntime(
+        items,
+        (item) => {
+            const target = toTarget(item);
+            return { item, target, scoring: resolveScoringConfig?.(target) };
+        },
+        whitespace,
+        evaluate,
+    );
 }
 
 function createMultiFieldSearcher<T>(
@@ -334,12 +345,17 @@ function createMultiFieldSearcher<T>(
     const scoringOpt = options.scoring;
     const scoreFn = options.score;
 
-    // GC 압박 회피용 재사용 버퍼: target 만 entry 마다 갈아 끼운다.
+    // 함수형 scoring 은 entry 생성 시 target당 1회 resolve 해 캐시한다 (매 검색 재계산 회피).
+    // 객체형은 공유 상수 하나로 충분 (entry 저장 불필요).
+    const scoringFn = typeof scoringOpt === "function" ? scoringOpt : undefined;
+    const staticCfg: ScoringConfig | undefined = typeof scoringOpt === "function" ? undefined : scoringOpt;
+
+    // GC 압박 회피용 재사용 버퍼: target·scoring 만 entry 마다 갈아 끼운다.
     // matchFields 는 결과에 MatchField 참조를 남기지 않으므로 안전.
     const placeholder = preprocessTarget("");
     const fieldBuf: MatchField[] = fields.map((f) => ({ target: placeholder, weight: f.weight }));
 
-    const evaluate: Evaluate<{ item: T; targets: Target[] }, MultiFieldSearchResult<T>> = (
+    const evaluate: Evaluate<{ item: T; targets: Target[]; scorings?: ScoringConfig[] }, MultiFieldSearchResult<T>> = (
         entry,
         query,
         queryInput,
@@ -348,8 +364,11 @@ function createMultiFieldSearcher<T>(
         let result: FieldsMatchResult | null;
 
         if (query) {
-            for (let f = 0; f < fieldBuf.length; f++) fieldBuf[f].target = targets[f];
-            result = matchFields(query, fieldBuf, { scoring: scoringOpt, strict });
+            for (let f = 0; f < fieldBuf.length; f++) {
+                fieldBuf[f].target = targets[f];
+                fieldBuf[f].scoring = entry.scorings ? entry.scorings[f] : staticCfg;
+            }
+            result = matchFields(query, fieldBuf, { strict });
         } else {
             // literal 멀티필드: any-field substring, score 0 (단일 필드 literal 과 동일).
             const perField: (MatchResult | null)[] = [];
@@ -371,7 +390,15 @@ function createMultiFieldSearcher<T>(
         };
     };
 
-    return makeRuntime(items, (item) => ({ item, targets: toTargets.map((tt) => tt(item)) }), whitespace, evaluate);
+    return makeRuntime(
+        items,
+        (item) => {
+            const targets = toTargets.map((tt) => tt(item));
+            return { item, targets, scorings: scoringFn ? targets.map((t) => scoringFn(t)) : undefined };
+        },
+        whitespace,
+        evaluate,
+    );
 }
 
 function* iota(n: number): Generator<number> {

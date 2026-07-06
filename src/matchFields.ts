@@ -39,7 +39,8 @@ export function matchFields(
     const scoringOpt = opts?.scoring;
     const cfgFor: (t: Target) => ScoringConfig | undefined =
         typeof scoringOpt === "function" ? scoringOpt : scoringOpt != null ? () => scoringOpt : () => undefined;
-    const fieldCfgs = fields.map((f) => cfgFor(f.target)); // 필드당 1회 resolve
+    // 필드에 pre-resolved scoring 이 있으면 우선, 없으면 opts.scoring 을 필드당 1회 resolve.
+    const fieldCfgs = fields.map((f) => f.scoring ?? cfgFor(f.target));
 
     let totalScore = 0;
     const winners: MatchResult[][] = fields.map(() => []);
