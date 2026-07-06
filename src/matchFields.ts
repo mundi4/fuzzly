@@ -4,7 +4,8 @@ import type { FieldsMatchResult, MatchField, MatchResult, Query, ScoringConfig, 
 
 // 토큰의 모든 grapheme이 한글 자음-only일 때만 true (D4).
 // vowelIndex !== -1 (모음 있음) 또는 첫 atom이 자음이 아니면 (non-Hangul) false.
-function isChosungOnlyToken(q: Query): boolean {
+// createSearcher 세션 재사용 가드도 이 판정을 공유한다 (chosung:false 필드 un-gating 감지).
+export function isChosungOnlyToken(q: Query): boolean {
     const gs = q.graphemes;
     if (gs.length === 0) return false;
     for (const g of gs) {

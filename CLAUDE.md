@@ -91,6 +91,8 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 **세션 최적화**: `createSearcher`는 `literal` 토글 시 세션을 리셋한다 (`strict`/`whitespace`는 인스턴스 단위로 고정이라 애초에 안 바뀜). 재사용 판정은 **토큰별 atom prefix**: 이전 쿼리의 모든 토큰이 각각 새 쿼리의 어떤 토큰의 atom-prefix이면 이전 매치만 재스캔한다. split 모드도 이 규칙으로 세션 재사용되며, 멀티필드도 동일 로직을 공유한다.
 
+**chosung un-gating 가드** (issue #35): `chosung: false` 필드가 하나라도 있는 멀티필드 searcher에서는 atom-prefix만으로 단조성이 성립하지 않는다. 초성-only 토큰은 `chosung:false` 필드에서 gate-out되므로, 모음이 붙어 초성-only가 풀리는 순간(예: `ㅍ`→`파`) 그 필드가 un-gate되어 매치 집합이 **커진다**. `makeRuntime`는 이전 토큰이 초성-only인데 대응 현재 토큰이 초성-only가 아니면 재사용을 금지(full scan)하여 단조 narrowing을 보존한다. `chosung:false` 필드가 없으면 이 가드는 무효(single-field 포함).
+
 ### whitespace 모드 (공백 처리)
 
 **`WhitespaceMode`** (`SearchOptions.whitespace`, `buildQuery` 2번째 인자 `{ whitespace }`):

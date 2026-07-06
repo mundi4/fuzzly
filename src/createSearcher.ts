@@ -1,7 +1,7 @@
 import { buildMatchRanges } from "./buildMatchRanges";
 import { buildQuery } from "./buildQuery";
 import { matchBest, matchLiteral } from "./match";
-import { matchFields } from "./matchFields";
+import { isChosungOnlyToken, matchFields } from "./matchFields";
 import { preprocessTarget } from "./preprocessTarget";
 import type {
     FieldsMatchResult,
@@ -112,17 +112,23 @@ function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
     toEntry: (item: T) => E,
     whitespace: WhitespaceMode,
     evaluate: Evaluate<E, R>,
+    // chosung:false 필드가 하나라도 있으면 세션 재사용 단조성이 깨질 수 있다 (issue #35).
+    // 초성-only 토큰은 chosung:false 필드에서 gate-out 되므로, 모음이 붙어 초성-only 가
+    // 풀리는 순간(예: "ㅍ"→"파") 해당 필드가 un-gate 되어 매치 집합이 커진다.
+    hasChosungFalseField = false,
 ): Runtime<T, R> {
     let entries: E[] = items.map(toEntry);
 
-    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
+    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, 토큰별 초성-only 플래그, literal 모드, 매치된 엔트리 인덱스 배열.
     // split 모드는 토큰(subQuery)마다 atoms 를 가지므로 문자열 배열로 보관한다.
     let prevTokens: string[] = [];
+    let prevTokenChosung: boolean[] = [];
     let prevLiteral = false;
     let prevMatchedIndices: number[] | null = null;
 
     function resetSession() {
         prevTokens = [];
+        prevTokenChosung = [];
         prevLiteral = false;
         prevMatchedIndices = null;
     }
@@ -144,13 +150,36 @@ function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
                   ? query.subQueries.map((s) => s.atoms)
                   : [query ? query.atoms : ""];
 
+            // 토큰별 초성-only 여부 (chosung un-gating 가드용). literal·빈 쿼리는 무의미하므로 false.
+            const currentTokenChosung: boolean[] =
+                currentLiteral || !query
+                    ? currentTokens.map(() => false)
+                    : query.subQueries
+                      ? query.subQueries.map((s) => isChosungOnlyToken(s))
+                      : [isChosungOnlyToken(query)];
+
             // literal 모드 토글 시 세션 단절.
             // 이전 모든 토큰이 각각 어떤 현재 토큰의 atom-prefix 이면 매치 집합은 단조 축소 →
             // 이전 매치만 재스캔. 동일 쿼리 재실행(prefix == 자기 자신)도 안전하게 재사용.
+            //
+            // chosung un-gating 가드 (issue #35): chosung:false 필드가 있으면, 초성-only 였던 이전
+            // 토큰이 초성-only 가 아닌 현재 토큰으로 확장될 때(모음 추가) 그 필드가 un-gate 되어
+            // 매치 집합이 커질 수 있다 → 단조 축소 위반. 그 경우 재사용 금지(full scan).
             const flagsCompatible = prevLiteral === currentLiteral;
             const canReuse =
                 prevTokens.length > 0 &&
-                prevTokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p))) &&
+                prevTokens.every((p, j) => {
+                    if (p.length === 0) return false;
+                    let matched = false;
+                    for (let c = 0; c < currentTokens.length; c++) {
+                        if (!currentTokens[c].startsWith(p)) continue;
+                        matched = true;
+                        if (hasChosungFalseField && prevTokenChosung[j] && !currentTokenChosung[c]) {
+                            return false; // 초성-only → 비초성-only 전이 = un-gating → unsound
+                        }
+                    }
+                    return matched;
+                }) &&
                 flagsCompatible &&
                 prevMatchedIndices !== null;
             const sessionIndices = canReuse ? prevMatchedIndices : null;
@@ -195,6 +224,7 @@ function makeRuntime<T, E extends { item: T }, R extends { score?: number }>(
             }
 
             prevTokens = currentTokens;
+            prevTokenChosung = currentTokenChosung;
             prevLiteral = currentLiteral;
             prevMatchedIndices = matchedIndices;
 
@@ -365,7 +395,15 @@ function createMultiFieldSearcher<T>(
         };
     };
 
-    return makeRuntime(items, (item) => ({ item, targets: toTargets.map((tt) => tt(item)) }), whitespace, evaluate);
+    const hasChosungFalseField = fields.some((f) => f.chosung === false);
+
+    return makeRuntime(
+        items,
+        (item) => ({ item, targets: toTargets.map((tt) => tt(item)) }),
+        whitespace,
+        evaluate,
+        hasChosungFalseField,
+    );
 }
 
 function* iota(n: number): Generator<number> {
