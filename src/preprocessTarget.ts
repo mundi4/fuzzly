@@ -4,12 +4,29 @@ import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
 import type { Atoms, Target } from "./types";
 
 /**
+ * `Target` 영속화(직렬화) 포맷 버전.
+ *
+ * `Target`은 `structuredClone`/IndexedDB에 직접 저장하고 다른 세션에서 그대로
+ * hydrate할 수 있다. atom ID는 순수함수 산출이라 값 자체는 안정적이지만,
+ * fuzzly 업그레이드로 **Target 필드 구성이나 atom 인코딩 구조**가 바뀌면
+ * 저장된 Target이 조용히 호환 불가가 된다. 이 상수는 그 무효화 계약을 명시한다:
+ * 구조가 바뀌면 bump한다.
+ *
+ * **소비 계약**: 이 값을 **캐시 행마다** 적을 필요는 없다. 소비자는 스토어 단위로
+ * 한 번만 기록해두고(예: IndexedDB의 meta 레코드 하나), 로드 시 불일치하면
+ * 저장된 Target 전체를 재전처리한다. 무효화 판단 주체는 소비자이며, fuzzly는
+ * 이 버전 값만 노출한다.
+ */
+export const PREPROCESS_VERSION = 1;
+
+/**
  * 검색 대상 문자열을 grapheme 단위로 분해하고 flat typed array 레이아웃으로 저장한다.
  * 결과 Target 객체는 한 번 생성해두고 여러 쿼리에 대해 재사용하는 것이 의도된 패턴.
  *
  * 반환된 `Target`은 모든 필드가 `string | number | TypedArray`이고
  * atom ID가 순수함수로 산출되므로(자모/ASCII 고정 + 그 외는 codepoint 그대로)
  * `structuredClone` / IndexedDB에 직접 저장하고 어떤 세션에서든 그대로 로드 가능하다.
+ * 영속화 시 무효화 판단은 {@link PREPROCESS_VERSION} 상수로 한다 (스토어 단위 1회 기록).
  *
  * **제약**: 입력이 65535 UTF-16 코드유닛을 초과하면 `RangeError`.
  * 커맨드팔레트 용도에서는 도달할 수 없는 한계.

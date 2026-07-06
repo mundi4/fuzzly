@@ -57,6 +57,12 @@ grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClone/IDB 직접 저장 가능.
 atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 별도 매핑 저장/복원 불필요.
 
+**무효화 계약**: `PREPROCESS_VERSION` (export 상수)은 Target 레이아웃/atom 인코딩 구조가
+바뀔 때만 bump된다 (atom ID 값 자체는 순수함수라 안정 → 값 안정성엔 영향 없음).
+fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. 소비자는 이 값을 **캐시 행마다
+적지 말고** 스토어 단위로 한 번만 기록(예: IDB meta 레코드 하나)해두고, 로드 시 불일치하면
+저장된 Target 전체를 재전처리한다.
+
 ### match.ts
 
 2개 함수: `matchBest` (DP + scoring), `matchLiteral` (indexOf).

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { preprocessTarget } from "../src/index";
+import { PREPROCESS_VERSION, preprocessTarget } from "../src/index";
 
 describe("preprocessTarget - 유닛 테스트", () => {
     describe("기본 기능", () => {
@@ -313,6 +313,24 @@ describe("preprocessTarget - 유닛 테스트", () => {
             const target = preprocessTarget("한");
             expect(target.atomsFlat).toBeInstanceOf(Uint16Array);
             expect(target.atomLens[0]).toBe(3);
+        });
+    });
+
+    describe("영속화 무효화 계약 (PREPROCESS_VERSION)", () => {
+        it("정수 상수로 export된다", () => {
+            expect(Number.isInteger(PREPROCESS_VERSION)).toBe(true);
+            expect(PREPROCESS_VERSION).toBeGreaterThan(0);
+        });
+
+        it("스토어 단위 버전만 맞으면 structuredClone 왕복 Target이 그대로 hydrate된다", () => {
+            const storedVersion = PREPROCESS_VERSION; // 소비자가 meta 레코드에 한 번만 기록
+            const target = preprocessTarget("안녕하세요");
+            const record = structuredClone(target); // IDB 저장 → 로드 시뮬레이션
+
+            // 로드 시: 스토어 버전 일치 → 재전처리 없이 사용
+            expect(storedVersion).toBe(PREPROCESS_VERSION);
+            expect(record.graphemeCount).toBe(target.graphemeCount);
+            expect(Array.from(record.atomsFlat)).toEqual(Array.from(target.atomsFlat));
         });
     });
 });
