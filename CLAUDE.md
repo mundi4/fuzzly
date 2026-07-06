@@ -33,6 +33,8 @@ LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적
 
 **충돌 (실 사용에선 미발생)**: 제어문자 U+0000-U+001F는 ID 0-31로 자모 영역과, U+007F/U+0080은 fixed ASCII와 충돌. command palette 텍스트엔 등장하지 않으므로 무시.
 
+**필드 concat 금지**: 멀티필드를 흉내내려 여러 필드를 구분자로 이어 붙이지 말 것. 개행 `\n`(U+000A)은 code unit 10 → atom ID 10 = `ㅅ`과 충돌하므로 `"a\nb"`가 `ㅅ`을 매치하는 등 오염이 생긴다. 여러 필드는 `matchFields`/멀티필드 searcher로 처리한다.
+
 ### Target Flat Layout
 
 `preprocessTarget(input)` → `Target`. flat typed array 레이아웃:
@@ -87,7 +89,7 @@ fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. �
 
 IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `strict=false`의 일반 lenient 매치로 자연 수용된다. 초성-only 쿼리(`ㅁㅇㅎㄱ`)도 동일하게 매치되며, 순위는 scoring(anchorFill)으로 하단에 밀려난다.
 
-**세션 최적화**: `createSearcher`는 직전 호출 대비 `strict`/`whitespace`/`literal`이 바뀌면 세션을 자동 리셋한다.
+**세션 최적화**: `createSearcher`는 `literal` 토글 시 세션을 리셋한다 (`strict`/`whitespace`는 인스턴스 단위로 고정이라 애초에 안 바뀜). 재사용 판정은 **토큰별 atom prefix**: 이전 쿼리의 모든 토큰이 각각 새 쿼리의 어떤 토큰의 atom-prefix이면 이전 매치만 재스캔한다. split 모드도 이 규칙으로 세션 재사용되며, 멀티필드도 동일 로직을 공유한다.
 
 ### whitespace 모드 (공백 처리)
 
@@ -119,6 +121,27 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 
 핵심 포인트: anchorFill은 Σ(atoms²) 스케일이라 한 anchor에 atom이 몰린 완전 매치가 이 항 기준으로 유리하다. 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
 
+### 멀티필드 매칭 (`matchFields.ts`)
+
+하나의 (split) 쿼리를 여러 필드(Target)에 대해 **토큰 단위 cross-field AND**로 매칭한다. split 위에 서므로
+`whitespace: "split"`과 함께 쓴다. 토큰 = `query.subQueries ?? [query]` (non-split은 통째 1토큰).
+
+| 규칙 | 동작 |
+| --- | --- |
+| **토큰 AND** | 각 토큰은 `max over fields(weighted score)`로 최적 필드 결정. 모든 토큰이 ≥1 필드에서 hit해야 통과, 하나라도 미커버면 `null` |
+| **argmax 귀속** | 각 토큰은 argmax 필드에만 하이라이트 귀속(winner-takes-highlight). weighted 동점이면 **낮은 필드 인덱스** 승 (strict `>`) |
+| **부호 보존 weight** | `score >= 0 ? score*w : score/w`. weight를 올리면 양·음수 전 구간에서 유리. `weight > 0` 필수 (아니면 `RangeError`) |
+| **토큰 단위 chosung** | 토큰의 모든 grapheme이 자음-only일 때만 "초성 토큰". 초성 토큰은 `chosung: false` 필드에서 후보 수집 스킵(hard filter). 혼합 토큰(`홍ㄱ`)은 영향 없음 |
+| **score 분리** | 아이템 최상위 `score` = Σ 토큰 best **weighted**. `perField[i].score` = 그 필드 귀속 토큰들의 **raw**(비가중) 합 (`mergeMatchResults`, split 합성과 동일 규칙) |
+| **길이 정규화 없음** | 짧은 필드 우위는 의도된 동작 (정규화하지 않음) |
+| **dedup 계약** | split의 atom-prefix dedup 그대로. `"홍길동 홍"` ≡ `"홍길동"` |
+
+`createSearcher(items, { fields, … })` = **멀티필드 searcher**. `fields`는 `key`/`target`과 상호 배타(TypeError),
+빈 배열·필드에 key/target 둘 다 없음도 TypeError, weight ≤ 0은 생성 시점 RangeError. 각 필드는
+`key`(→`preprocessTarget`) 또는 `target`(prebuilt hydrate) 공급. 단일·멀티는 세션 재사용/heap/incremental 로직을
+공유 런타임(`makeRuntime`)으로 통일하고 per-entry `evaluate` 클로저만 다르다. literal 멀티필드는 any-field
+substring이며 score 0 (단일 필드 literal과 동일).
+
 ## Public API (`src/index.ts`)
 
 ```
@@ -126,9 +149,12 @@ buildQuery(input, opts?: { whitespace? }) → Query
 preprocessTarget(input) → Target
 matchBest(query, target, scoring?, strict?) → MatchResult | null (score 포함)
 matchLiteral(literal, target) → MatchResult | null
+matchFields(query, fields, opts?: { scoring?, strict? }) → FieldsMatchResult | null (토큰 단위 cross-field AND)
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 createSearcher(items, opts?: SearcherOptions) → Searcher (session 최적화 내장)
   searcher.search(queryInput, options?: SearchResultOptions)
+createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (멀티필드 모드)
+  searcher.search(queryInput, options?) → MultiFieldSearchResult[] (필드별 result/ranges)
 ```
 
 옵션 분리 (옵션 위치 = 의미):
