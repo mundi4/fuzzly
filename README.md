@@ -24,12 +24,16 @@ const results = searcher.search("ㅍㅇ");
 // → [{ item: "파일 열기", ... }, { item: "폴더 열기", ... }]
 ```
 
-하이라이트는 결과의 `ranges()`로 얻는다 (원문 UTF-16 offset 기준 `{ start, end }` 배열):
+하이라이트는 결과의 `ranges()`로 얻는다 (원문 UTF-16 offset 기준 `{ start, end }` 배열).
+`segmentByRanges`를 쓰면 렌더링용 조각으로 바로 분할된다:
 
 ```ts
+import { segmentByRanges } from "fuzzly";
+
 for (const r of results) {
-    console.log(r.item, r.ranges());
-    // "파일 열기" [{ start: 0, end: 2 }]  → "**파일** 열기"
+    const segments = segmentByRanges(r.target.input, r.ranges());
+    // [{ text: "파일", matched: true }, { text: " 열기", matched: false }]
+    // matched 조각만 <mark>로 감싸면 끝 — escape/slice boilerplate 불필요
 }
 ```
 
@@ -219,10 +223,11 @@ searcher 없이 매칭 파이프라인을 직접 조합할 수도 있다:
 | --- | --- |
 | `buildQuery(input, { whitespace? })` | 쿼리 문자열 → `Query` (grapheme·자모 분해) |
 | `preprocessTarget(input)` | 대상 문자열 → `Target` (flat typed array, 재사용·직렬화 가능) |
-| `matchBest(query, target, scoring?, strict?)` | DP 기반 최적 매치. `MatchResult \| null` (score 포함) |
-| `matchLiteral(literal, target)` | raw substring 매치 (indexOf) |
+| `matchBest(query, target, { scoring?, strict? })` | DP 기반 최적 매치. `MatchResult \| null` (score 포함) |
+| `matchLiteral(literal, target)` | raw substring 매치 (best occurrence + 간이 score) |
 | `matchFields(query, fields, { scoring?, strict? })` | 토큰 단위 cross-field AND. `FieldsMatchResult \| null` |
 | `buildMatchRanges(hitMaps, target)` | `MatchResult.indices` 배열들 → 하이라이트 범위 `MatchRange[]` |
+| `segmentByRanges(text, ranges)` | 원문 + `MatchRange[]` → `{ text, matched }[]` 렌더링 조각 |
 
 ```ts
 import { buildMatchRanges, buildQuery, matchBest, preprocessTarget } from "fuzzly";
