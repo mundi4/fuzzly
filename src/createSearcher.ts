@@ -132,31 +132,47 @@ type Runtime<T, R> = {
  */
 type Evaluate<E, R> = (entry: E, query: Query | null, queryInput: string) => { score: number; make: () => R } | null;
 
+// 세션 스냅샷: 완료된 스캔 하나의 (쿼리 토큰, literal, filter, 매치 집합) 기록.
+type SessionSnapshot<T> = {
+    tokens: string[];
+    literal: boolean;
+    filter: ((item: T) => boolean) | null;
+    matchedIndices: number[];
+};
+
+// 히스토리 깊이 상한 — 백스페이스 복원용 조상 스냅샷. 키스트로크당 int 배열 하나 수준이라 부담 없음.
+const SESSION_HISTORY_MAX = 32;
+
+function tokensEqual(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
 function makeRuntime<T, E extends { item: T; tie: number }, R>(
     items: readonly T[],
     toEntry: (item: T) => E,
     whitespace: WhitespaceMode,
+    strict: boolean,
     evaluate: Evaluate<E, R>,
 ): Runtime<T, R> {
     let entries: E[] = items.map(toEntry);
 
-    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열, per-call 필터.
+    // 세션 상태: 완료된 스캔들의 스냅샷 스택 (오래된 것 → 최신 순).
+    // - prefix 확장(순방향 타이핑): 최신 스냅샷이 재사용됨 (기존 단일-prev 동작과 동일)
+    // - prefix 축소(백스페이스): 조상 스냅샷이 재사용됨 — full rescan 회피
     // split 모드는 토큰(subQuery)마다 atoms 를 가지므로 문자열 배열로 보관한다.
     // 커밋은 스캔이 **완료되는 시점(마지막 엔트리 평가)** 에만 일어난다 — 중단된 스캔의 부분 매치
     // 집합이 세션에 새지 않아 이후 prefix 쿼리 오염이 구조적으로 불가능.
-    let prevTokens: string[] = [];
-    let prevLiteral = false;
-    let prevMatchedIndices: number[] | null = null;
-    let prevFilter: ((item: T) => boolean) | null = null;
+    let history: SessionSnapshot<T>[] = [];
 
     // 뮤테이션 가드: add/remove/replaceAll 이 entries 인덱스를 무효화하므로 진행 중인 커서를 무효화한다.
     let generation = 0;
 
     function resetSession() {
-        prevTokens = [];
-        prevLiteral = false;
-        prevMatchedIndices = null;
-        prevFilter = null;
+        history = [];
     }
 
     // 재사용 판정 / 쿼리 빌드 / 커서 상태 초기화는 커서 생성 시 1회. next() 로 budget 단위 진행한다.
@@ -177,17 +193,29 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
 
         // 재사용 조건: 토큰 atom-prefix (매치 집합 단조 축소) AND literal 플래그 일치 AND 필터 호환.
         // 필터 호환 = 동일 참조(재적용 무해) 또는 이전 무필터(superset 을 좁히는 방향이라 sound).
-        const flagsCompatible = prevLiteral === currentLiteral;
-        const filtersCompatible = currentFilter === prevFilter || prevFilter === null;
-        const canReuse =
-            prevTokens.length > 0 &&
-            prevTokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p))) &&
-            flagsCompatible &&
-            filtersCompatible &&
-            prevMatchedIndices !== null;
-
-        // 스캔 소스: 세션 재사용 시 이전 매치 인덱스 배열, 아니면 0..entries.length 숫자 범위.
-        const source: number[] | null = canReuse ? prevMatchedIndices : null;
+        //
+        // strict fuzzy 매칭은 atom-prefix 확장이 매치 집합을 단조 축소시키지 않는다
+        // (가→각: 중간 상태는 exact 불일치로 miss, 완성 상태는 hit — 집합이 커짐).
+        // 따라서 strict 인스턴스의 non-literal 스캔은 토큰이 **완전 동일**할 때만 재사용한다.
+        // literal 은 substring 매칭이라 문자열 확장에 대해 단조 → strict 와 무관하게 prefix 재사용 가능.
+        //
+        // 히스토리에서 호환 스냅샷 중 매치 집합이 가장 작은 것을 고른다
+        // (백스페이스 후엔 최신 스냅샷이 아닌 조상 스냅샷이 호환된다).
+        const exactTokensOnly = strict && !currentLiteral;
+        let source: number[] | null = null;
+        for (let h = history.length - 1; h >= 0; h--) {
+            const s = history[h];
+            if (s.literal !== currentLiteral) continue;
+            if (!(currentFilter === s.filter || s.filter === null)) continue;
+            const tokensOk = exactTokensOnly
+                ? tokensEqual(s.tokens, currentTokens)
+                : s.tokens.length > 0 &&
+                  s.tokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p)));
+            if (!tokensOk) continue;
+            if (source === null || s.matchedIndices.length < source.length) {
+                source = s.matchedIndices;
+            }
+        }
         const scanSize = source ? source.length : entries.length;
         const capturedGeneration = generation;
 
@@ -240,13 +268,30 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
 
                 if (position >= scanSize) {
                     done = true;
-                    // 완료 시점에만 세션 커밋. 커서 동시 사용은 last-completion-wins:
-                    // 늦게 완료된 이전 쿼리 커서가 세션을 되돌려도 (tokens ↔ matched set ↔ filter)
-                    // 쌍이 내부적으로 일관되므로 unsound 하지 않다 (다음 재사용이 덜 최적일 뿐).
-                    prevTokens = currentTokens;
-                    prevLiteral = currentLiteral;
-                    prevMatchedIndices = matchedIndices;
-                    prevFilter = currentFilter;
+                    // 완료 시점에만 세션 커밋 (히스토리 스택에 push). 커서 동시 사용은
+                    // last-completion-wins: 늦게 완료된 이전 쿼리 커서의 스냅샷이 나중에 쌓여도
+                    // (tokens ↔ matched set ↔ filter) 쌍이 내부적으로 일관되므로 unsound 하지 않다.
+                    // 빈 토큰 스냅샷은 어차피 재사용 불가라 push 하지 않는다.
+                    if (currentTokens.length > 0 && currentTokens.every((t) => t.length > 0)) {
+                        const top = history[history.length - 1];
+                        if (
+                            top !== undefined &&
+                            top.literal === currentLiteral &&
+                            top.filter === currentFilter &&
+                            tokensEqual(top.tokens, currentTokens)
+                        ) {
+                            // 동일 쿼리 재검색: top 교체 (히스토리 중복 방지)
+                            top.matchedIndices = matchedIndices;
+                        } else {
+                            history.push({
+                                tokens: currentTokens,
+                                literal: currentLiteral,
+                                filter: currentFilter,
+                                matchedIndices,
+                            });
+                            if (history.length > SESSION_HISTORY_MAX) history.shift();
+                        }
+                    }
                 }
                 return done;
             },
@@ -397,6 +442,7 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
             return { item, target, scoring: resolveScoringConfig?.(target), tie: tiebreakKey ? tiebreakKey(item) : 0 };
         },
         whitespace,
+        strict,
         evaluate,
     );
 }
@@ -496,6 +542,7 @@ function createMultiFieldSearcher<T>(
             };
         },
         whitespace,
+        strict,
         evaluate,
     );
 }
