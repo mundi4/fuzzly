@@ -232,7 +232,8 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
                     throw new Error("fuzzly: searcher was mutated during scan");
                 }
 
-                const end = budget == null ? scanSize : Math.min(position + budget, scanSize);
+                // budget 생략 = 끝까지. 음수 budget 은 no-op(0)으로 클램프해 end < position 을 막는다.
+                const end = budget == null ? scanSize : Math.min(position + Math.max(0, budget), scanSize);
                 for (; position < end; position++) {
                     evalOne(source ? source[position] : position);
                 }
@@ -262,21 +263,16 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
                 return matchedIndices.length;
             },
             results(): R[] {
+                // 완료 후엔 buf 가 불변이므로 정렬 결과를 캐시. 미완료엔 매번 fresh snapshot.
+                if (done && sorted !== null) return sorted;
                 const buf = limit > 0 ? heap : collected;
-                if (done) {
-                    // 완료 후엔 buf 가 불변이므로 정렬 결과를 캐시.
-                    if (sorted === null)
-                        sorted = buf
-                            .slice()
-                            .sort(byRank)
-                            .map((w) => w.value);
-                    return sorted;
-                }
-                // 미완료: 진행 중 buf 를 훼손하지 않도록 복사본을 정렬한 snapshot.
-                return buf
+                // slice() 로 복사 후 정렬 — 진행 중 live buf(heap 불변식)를 훼손하지 않는다.
+                const out = buf
                     .slice()
                     .sort(byRank)
                     .map((w) => w.value);
+                if (done) sorted = out;
+                return out;
             },
         };
     }

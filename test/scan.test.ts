@@ -71,6 +71,18 @@ describe("scan cursor", () => {
             expect(cursor.next()).toBe(true);
             expect(cursor.processed).toBe(3);
         });
+
+        it("음수 budget 은 no-op(0)으로 클램프 — position 이 뒤로 가지 않음", () => {
+            const searcher = createSearcher(["가", "나", "다"]);
+            const cursor = searcher.scan("");
+            cursor.next(2);
+            expect(cursor.processed).toBe(2);
+            // 음수 budget: 진행 없이 false, position 불변 (end < position 로 인한 회귀 없음).
+            expect(cursor.next(-5)).toBe(false);
+            expect(cursor.processed).toBe(2);
+            expect(cursor.next()).toBe(true);
+            expect(cursor.processed).toBe(3);
+        });
     });
 
     describe("total (정확한 전체 매치 수)", () => {
@@ -131,37 +143,53 @@ describe("scan cursor", () => {
             expect(cursor.results()).toHaveLength(3);
         });
 
-        it("results() 호출이 진행 중 스캔을 훼손하지 않음", () => {
-            const items = ["가1", "가2", "가3", "가4"];
+        it("results() 호출이 진행 중 heap 불변식을 훼손하지 않음 (in-place sort 회귀 감지)", () => {
+            // 서로 다른 score 를 갖도록 "가" 의 매치 위치를 벌린다: 낮은 점수 둘이 먼저 heap 을 채우고,
+            // mid-scan results() 후에 높은 점수가 들어와 heap-worst 를 evict 해야 한다.
+            // results() 가 live heap 을 in-place sort 하면 root 가 top-N 최악이 아니게 되어 eviction 이 틀어진다.
+            const lowLow = "다다다가"; // 가 at idx3 — 최저 점수
+            const low = "나가"; // 가 at idx1 — 중간 점수
+            const high = "가"; // 가 at idx0 — 최고 점수 (positionZero)
+            const items = [lowLow, low, high];
             const searcher = createSearcher(items);
+
+            // fresh 기준: top-2 는 {high, low}, lowLow 는 탈락.
+            const fresh = createSearcher(items)
+                .search("가", { limit: 2 })
+                .map((r) => r.item);
+            expect(fresh).toEqual([high, low]);
+
             const cursor = searcher.scan("가", { limit: 2 });
+            cursor.next(2); // heap = {lowLow, low} (가득 참)
+            cursor.results(); // 미완료 스냅샷 — heap 을 in-place sort 하면 이후 evict 가 깨진다.
+            cursor.next(); // high 진입 → heap-worst(lowLow) evict
 
-            cursor.next(2);
-            cursor.results(); // 미완료 스냅샷 — heap 을 파괴하면 이후 결과가 틀어진다.
-            cursor.results();
-            cursor.next();
-
-            const fresh = createSearcher(items).search("가", { limit: 2 });
-            expect(cursor.results().map((r) => r.item)).toEqual(fresh.map((r) => r.item));
+            const got = cursor.results().map((r) => r.item);
+            expect(got).toEqual(fresh); // in-place sort 회귀면 lowLow 대신 low 가 잘못 탈락해 불일치
+            expect(got).not.toContain(lowLow);
         });
     });
 
     describe("abort 무해성", () => {
         it("절반만 진행하고 버린 커서는 세션을 오염시키지 않음", () => {
-            const items = ["가나다", "가나라", "가마", "가바", "나다"];
+            // "가나" 매처(가나다·가나라)를 aborted prefix(첫 2개) **바깥**에 배치한다.
+            // 만약 중단된 scan("가") 가 부분 매치 {가마,가바}=인덱스{0,1}를 잘못 커밋하면,
+            // 이어지는 search("가나") 가 그 집합만 재스캔해 실제 매처를 DROP → fresh 와 불일치.
+            const items = ["가마", "가바", "가나다", "가나라", "나다"];
             const searcher = createSearcher(items);
 
-            // scan("가") 를 절반만 진행하고 버림.
+            // scan("가") 를 절반만(가마·가바) 진행하고 버림 — 이 둘은 "가나" 를 매치하지 않는다.
             const aborted = searcher.scan("가");
             aborted.next(2);
             expect(aborted.done).toBe(false);
 
-            // 이어지는 search("가나") 는 fresh 와 동일해야 한다.
+            // 이어지는 search("가나") 는 fresh 와 동일해야 한다 (부분 스캔 미커밋 → full scan).
             const viaAborted = searcher.search("가나").map((r) => r.item);
             const fresh = createSearcher(items)
                 .search("가나")
                 .map((r) => r.item);
             expect(viaAborted).toEqual(fresh);
+            expect(viaAborted.sort()).toEqual(["가나다", "가나라"]);
         });
 
         it("완료된 커서만 세션에 커밋된다", () => {
@@ -289,7 +317,7 @@ describe("scan cursor", () => {
 
             searcher.remove((s) => s === "가2");
 
-            expect(() => cursor.next()).toThrow("mutated during scan");
+            expect(() => cursor.next()).toThrow("fuzzly: searcher was mutated during scan");
         });
 
         it("scan 진행 중 replaceAll() → 다음 next() throw", () => {
@@ -299,7 +327,7 @@ describe("scan cursor", () => {
 
             searcher.replaceAll(["나1"]);
 
-            expect(() => cursor.next()).toThrow("mutated during scan");
+            expect(() => cursor.next()).toThrow("fuzzly: searcher was mutated during scan");
         });
 
         it("results() 는 mutation 후에도 throw 하지 않음 (이미 만들어진 값 반환)", () => {
