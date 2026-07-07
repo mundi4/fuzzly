@@ -297,18 +297,50 @@ export type SearcherOptions<T = string> = {
 };
 
 /**
- * `searcher.search()` 호출 단위로 결정되는 옵션 — per-call 의미만 남긴다.
+ * `searcher.search()` / `searcher.scan()` 호출 단위로 결정되는 옵션 — per-call 의미만 남긴다.
  * 매칭 정책(`whitespace`/`strict`/`scoring`/`score`)은 `SearcherOptions`로 이동했다.
  */
-export type SearchResultOptions = {
+export type SearchResultOptions<T = unknown> = {
     /** 결과 상위 N개만 유지 (0 또는 미지정 = 전체). */
     limit?: number;
     /** `true`면 substring(literal) 매치 경로. `whitespace` 옵션은 무시되며 raw substring 비교. */
     literal?: boolean;
+    /**
+     * per-call 필터. `false`를 반환하는 아이템은 **매칭 비용 자체를 스킵**하고 결과·`total`·세션
+     * 매치 집합에서 제외된다. 그룹 필터링 등을 단일 searcher로 처리하기 위한 것.
+     *
+     * **세션 재사용 계약**: 키스트로크 간 세션 재사용을 유지하려면 **동일한 함수 참조**를 유지해야
+     * 한다 (그룹 선택별로 filter 함수를 memoize). 참조가 바뀌거나 필터가 제거되면 full scan으로
+     * 폴백한다 (무필터 → 필터 추가는 superset을 좁히는 방향이라 재사용 sound).
+     */
+    filter?: (item: T) => boolean;
 };
 
 /** @deprecated `SearcherOptions` (정책) + `SearchResultOptions` (per-call) 로 분리됨. */
 export type SearchOptions = SearchResultOptions;
+
+/**
+ * pull 기반 스캔 커서. `Searcher.scan` / `MultiFieldSearcher.scan`이 반환한다.
+ *
+ * budget 단위로 엔트리를 평가하며(`next`), 완료 전 언제든 커서를 버리면 스캔이 취소된다.
+ * 세션 커밋은 스캔 **완료 시에만** 일어나므로 중단된 스캔의 부분 매치 집합은 세션에 커밋되지 않아
+ * 이후 prefix 쿼리의 매치 누락 오염이 **구조적으로 불가능**하다. 양보 주기(budget)와 async 래핑은
+ * 소비자 몫이다 (라이브러리는 Promise/AbortSignal을 도입하지 않고 zero-dependency 유지).
+ */
+export interface ScanCursor<R> {
+    /** budget개 엔트리 평가 후 반환. 스캔을 완료하면 `true`. budget 생략 = 끝까지 평가. */
+    next(budget?: number): boolean;
+    /** 스캔 완료 여부. */
+    readonly done: boolean;
+    /** 지금까지 평가한 엔트리 수 (진행률 UI용). */
+    readonly processed: number;
+    /** 이 스캔이 평가할 엔트리 총수 (세션 재사용 시 = 이전 매치 수). */
+    readonly scanSize: number;
+    /** 지금까지 발견한 매치 수. `done` 이후엔 `limit`와 무관한 정확한 전체 매치 수. */
+    readonly total: number;
+    /** score desc 정렬된 결과 (`limit` 적용). `done` 전엔 현재까지의 부분 결과 snapshot. */
+    results(): R[];
+}
 
 export type SearchResult<T = string> = {
     item: T;
@@ -319,7 +351,24 @@ export type SearchResult<T = string> = {
 };
 
 export interface Searcher<T = string> {
-    search(queryInput: string, options?: SearchResultOptions): SearchResult<T>[];
+    search(queryInput: string, options?: SearchResultOptions<T>): SearchResult<T>[];
+    /**
+     * 취소·양보 가능한 pull 기반 스캔 커서를 반환한다. `search()`는 `scan(...).next(); results()`의
+     * 축약이다. `total`(정확한 전체 매치 수)과 워커에서의 incremental/cancellable 스캔이 필요할 때 사용.
+     *
+     * @example
+     * ```ts
+     * async function searchAsync(searcher, q, { limit, filter, signal, chunk = 256 } = {}) {
+     *     const cursor = searcher.scan(q, { limit, filter });
+     *     while (!cursor.next(chunk)) {
+     *         if (signal?.aborted) return null; // 커서 버림 = 취소. 세션 오염 없음
+     *         await new Promise((r) => setTimeout(r)); // event loop 양보
+     *     }
+     *     return { results: cursor.results(), total: cursor.total };
+     * }
+     * ```
+     */
+    scan(queryInput: string, options?: SearchResultOptions<T>): ScanCursor<SearchResult<T>>;
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;
@@ -376,7 +425,12 @@ export type MultiFieldSearchResult<T> = {
 };
 
 export interface MultiFieldSearcher<T> {
-    search(queryInput: string, options?: SearchResultOptions): MultiFieldSearchResult<T>[];
+    search(queryInput: string, options?: SearchResultOptions<T>): MultiFieldSearchResult<T>[];
+    /**
+     * 취소·양보 가능한 pull 기반 스캔 커서를 반환한다 (단일 필드 `Searcher.scan`과 동일 계약).
+     * @see {@link Searcher.scan}
+     */
+    scan(queryInput: string, options?: SearchResultOptions<T>): ScanCursor<MultiFieldSearchResult<T>>;
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;

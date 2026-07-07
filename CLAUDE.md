@@ -153,16 +153,26 @@ matchLiteral(literal, target) → MatchResult | null
 matchFields(query, fields, opts?: { scoring?, strict? }) → FieldsMatchResult | null (토큰 단위 cross-field AND)
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 createSearcher(items, opts?: SearcherOptions) → Searcher (session 최적화 내장)
-  searcher.search(queryInput, options?: SearchResultOptions)
+  searcher.search(queryInput, options?: SearchResultOptions) → SearchResult[]
+  searcher.scan(queryInput, options?: SearchResultOptions) → ScanCursor<SearchResult>
 createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (멀티필드 모드)
   searcher.search(queryInput, options?) → MultiFieldSearchResult[] (필드별 result/ranges)
+  searcher.scan(queryInput, options?) → ScanCursor<MultiFieldSearchResult>
 ```
 
 옵션 분리 (옵션 위치 = 의미):
 
 - `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`, `tiebreakKey`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
-- `SearchResultOptions` (per-call): `limit`, `literal`. search 단위로만 의미 있는 옵션.
+- `SearchResultOptions<T>` (per-call): `limit`, `literal`, `filter`. search/scan 단위로만 의미 있는 옵션.
 - `SearchOptions` 는 `SearchResultOptions` 의 alias (deprecated).
+
+### scan 커서 (issue #39)
+
+`search()`는 `scan()` 위에 재구현된다 (`const c = scan(q, opts); c.next(); return c.results()`) — 코드 경로 단일화. `scan`은 **pull 기반 커서**(`ScanCursor<R>`)를 반환해 워커에서의 취소·양보 가능 스캔과 정확한 total을 제공한다. 라이브러리는 Promise/AbortSignal을 내장하지 않는다 (async 래핑·budget은 소비자 몫, zero-dependency 유지). `ScanCursor`: `next(budget?)`(budget개 평가 후 반환, 완료 시 `true`), `done`, `processed`, `scanSize`, `total`(done 이후 `limit`와 무관한 정확한 전체 매치 수), `results()`(score desc 정렬, done 전엔 부분 snapshot).
+
+**세션 커밋 = 스캔 완료 시에만**. 중단된 스캔의 부분 매치 집합은 커밋되지 않아 이후 prefix 쿼리 오염이 구조적으로 불가능 → 커서를 버리는 것이 곧 취소. 커서 동시 사용은 last-completion-wins (커밋되는 tokens↔matched set↔filter 쌍이 내부 일관하므로 unsound하지 않음). **mutation guard**: `makeRuntime`의 `generation` 카운터를 `add`/`remove`/`replaceAll`에서 증가; 커서는 생성 시 캡처하고 `next()`에서 불일치하면 `Error("fuzzly: searcher was mutated during scan")` throw (`results()`는 guard 없음).
+
+**`SearchResultOptions.filter?: (item) => boolean`**: evaluate **전에** 평가 — 미통과 엔트리는 매칭 비용·결과·total·세션 매치 집합에서 제외. 세션 재사용 조건 = 토큰 atom-prefix AND literal 플래그 일치 AND **filter 호환**(`currentFilter === prevFilter` 참조 동등, 또는 `prevFilter == null` superset narrowing). 그 외(제거·교체)는 full scan. **계약**: 키스트로크 간 재사용을 유지하려면 동일 함수 참조를 유지할 것 (그룹 선택별 filter memoize).
 
 **Silent-ignore guard**: createSearcher 에 `limit`/`literal` 같은 per-call 키, 또는 search 에 `whitespace`/`strict`/`scoring`/`score` 같은 정책 키를 넘기면 dev 모드에서 `console.warn` (production 빌드는 스킵). 잘못된 위치 옵션의 silent ignore 차단.
 
@@ -170,6 +180,7 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 - `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`)
 - `SearcherOptions.strict?: boolean` (기본 `false`)
+- `ScanCursor<R>` — `scan()`이 반환하는 pull 기반 커서 (incremental/cancellable 스캔 + 정확한 total)
 - `SearcherOptions.tiebreakKey?: (item) => number` — score 동점 시 2차 정렬 키. 순서는 **score desc → tiebreakKey asc**. entry 생성 시 1회 평가·캐시. limit(heap) 경로의 eviction 판정도 `(score, tie)` 비교라 top-N이 결정적. `(score, tie)` 완전 동점 항목의 top-N **진입**은 unspecified이나 반환 **순서**는 결정적. 멀티필드도 동일.
 
 ## Conventions

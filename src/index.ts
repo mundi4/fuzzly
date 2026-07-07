@@ -17,6 +17,7 @@ export type {
     MultiFieldSearchResult,
     Query,
     QueryGrapheme,
+    ScanCursor,
     ScoringConfig,
     ScoringWeights,
     Searcher,
