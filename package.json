@@ -2,12 +2,31 @@
   "name": "fuzzly",
   "version": "1.1.0",
   "type": "module",
-  "description": "커맨트팔레트 용 그냥대충 애매하게 한글 매칭",
+  "description": "한글 초성·부분 조합·IME 중간상태까지 매칭하는 커맨드팔레트용 퍼지 매칭 라이브러리 (Korean-aware fuzzy matching for command palettes)",
   "exports": {
-    ".": "./src/index.ts",
-    "./score": "./src/score.ts",
-    "./react": "./src/react/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./score": {
+      "types": "./dist/score.d.ts",
+      "import": "./dist/score.js",
+      "require": "./dist/score.cjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js",
+      "require": "./dist/react/index.cjs"
+    }
   },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
   "peerDependencies": {
     "react": ">=16.8.0"
   },
@@ -17,19 +36,42 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/score.ts src/react/index.ts --dts --format esm,cjs,iife --global-name fuzzly",
+    "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "tsup",
+    "prepublishOnly": "npm run build",
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run",
     "test:ui": "vitest",
+    "bench": "vitest bench --run",
     "check": "biome check",
     "check:fix": "biome check --write",
     "format": "biome format --write",
     "lint": "biome lint",
     "ci": "biome ci"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "korean",
+    "hangul",
+    "fuzzy",
+    "fuzzy-search",
+    "fuzzy-match",
+    "fuzzy-matching",
+    "command-palette",
+    "초성검색",
+    "초성",
+    "한글",
+    "ime",
+    "typeahead",
+    "autocomplete",
+    "search",
+    "jamo"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mundi4/fuzzly.git"
+  },
+  "author": "mundi4",
   "license": "ISC",
   "devDependencies": {
     "@biomejs/biome": "2.4.11",
