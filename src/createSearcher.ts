@@ -96,8 +96,14 @@ const isProd = (() => {
     }
 })();
 
+// 동일 옵션 객체 재검사 방지 캐시 — 소비자가 옵션 객체를 재사용(메모이즈)하는 일반 패턴에서
+// 키 순회를 첫 호출 1회로 줄인다 (경고 중복 방지 겸용).
+const checkedOpts = new WeakSet<object>();
+
 function warnUnknownKeys(opts: object | undefined, allowed: Set<string>, where: string): void {
     if (isProd || opts == null) return;
+    if (checkedOpts.has(opts)) return;
+    checkedOpts.add(opts);
     for (const k of Object.keys(opts)) {
         if (!allowed.has(k)) {
             const hint = SEARCHER_ONLY_KEYS.has(k)
@@ -510,15 +516,16 @@ function createMultiFieldSearcher<T>(
             }
             result = matchFields(query, fieldBuf, { strict });
         } else {
-            // literal 멀티필드: any-field substring, score 0 (단일 필드 literal 과 동일).
+            // literal 멀티필드: any-field substring. score 는 필드별 literal 간이 스코어의 최대값
+            // (best field 기준 — 단일 필드 literal 의 best-occurrence 스코어와 대칭).
             const perField: (MatchResult | null)[] = [];
-            let anyHit = false;
+            let bestLit = -Infinity;
             for (const t of targets) {
                 const lit = matchLiteral(queryInput, t);
                 perField.push(lit);
-                if (lit !== null) anyHit = true;
+                if (lit !== null && (lit.score ?? 0) > bestLit) bestLit = lit.score ?? 0;
             }
-            result = anyHit ? { score: 0, perField } : null;
+            result = bestLit !== -Infinity ? { score: bestLit, perField } : null;
         }
 
         if (result === null) return null;

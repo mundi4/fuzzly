@@ -1,8 +1,8 @@
 import { isConsonantLUT } from "./internal/atomRegistry";
 import { foldCase } from "./internal/utils";
 import type { ResolvedScoring } from "./score";
-import { resolveScoring } from "./score";
-import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, Target } from "./types";
+import { resolveScoring, SCORING } from "./score";
+import type { Atoms, MatchBestOptions, MatchResult, Query, QueryGrapheme, ScoringConfig, Target } from "./types";
 
 /*
  * 매칭 모델
@@ -50,24 +50,48 @@ function buildMatchResult(indices: number[], target: Target): MatchResult {
 
 /**
  * 리터럴 substring 매칭 (대소문자 무시).
+ *
+ * 모든 occurrence를 순회해 간이 스코어가 가장 높은 위치를 채택하고 `score`를 세팅한다
+ * (issue #26 — 첫 occurrence 고정 + score 부재로 literal 랭킹이 입력 순서였던 문제):
+ * - `positionZero`: 매치가 target 선두에서 시작
+ * - `boundary`: 매치 시작 grapheme이 단어 경계
+ * - `targetLengthPenalty`: target 길이 페널티 (짧은 타겟 우대)
+ *
+ * occurrence 수는 실제 텍스트에서 소수이므로 전 occurrence 순회 비용은 무시 가능.
  */
 export function matchLiteral(literal: string, target: Target): MatchResult | null {
     if (literal === "") {
-        return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0 };
+        return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, score: 0 };
     }
     const text = foldCase(literal);
-    const foundAt = target.normalizedInput.indexOf(text);
+    const normalized = target.normalizedInput;
+    let foundAt = normalized.indexOf(text);
     if (foundAt < 0) return null;
 
-    const indices: number[] = [];
     const graphemeIndexes = target.graphemeIndexes;
+    let bestAt = foundAt;
+    let bestPosScore = -Infinity;
+    while (foundAt >= 0) {
+        let s = 0;
+        if (foundAt === 0) s += SCORING.POSITION_ZERO;
+        if (target.boundaryFlags[graphemeIndexes[foundAt]]) s += SCORING.BOUNDARY;
+        if (s > bestPosScore) {
+            bestPosScore = s;
+            bestAt = foundAt;
+        }
+        foundAt = normalized.indexOf(text, foundAt + 1);
+    }
+
+    const indices: number[] = [];
     for (let i = 0; i < text.length; i++) {
-        const gi = graphemeIndexes[foundAt + i];
+        const gi = graphemeIndexes[bestAt + i];
         if (indices[indices.length - 1] !== gi) {
             indices.push(gi);
         }
     }
-    return buildMatchResult(indices, target);
+    const result = buildMatchResult(indices, target);
+    result.score = bestPosScore + SCORING.TARGET_LENGTH_PENALTY * target.graphemeCount;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,16 +426,31 @@ function candidatePositionScore(c: Candidate, target: Target, sc: ResolvedScorin
  *
  * @param query - `buildQuery`로 만든 쿼리
  * @param target - `preprocessTarget`으로 만든 타겟
- * @param scoring - 스코어 가중치 / grapheme 보너스
- * @param strict - 엄격 매칭 모드 (기본 `false`)
+ * @param options - `{ scoring?, strict? }` 옵션 객체 (권장).
+ *   하위호환으로 `(query, target, scoring?, strict?)` positional 형태도 지원한다 (deprecated).
  * @returns 매치되면 `MatchResult` (with `score`), 아니면 `null`
  */
+export function matchBest(query: Query, target: Target, options?: MatchBestOptions): MatchResult | null;
+/** @deprecated positional `scoring`/`strict` 대신 `matchBest(query, target, { scoring, strict })` 사용 */
+export function matchBest(query: Query, target: Target, scoring?: ScoringConfig, strict?: boolean): MatchResult | null;
 export function matchBest(
     query: Query,
     target: Target,
-    scoring?: ScoringConfig,
-    strict: boolean = false,
+    scoringOrOptions?: ScoringConfig | MatchBestOptions,
+    strictArg: boolean = false,
 ): MatchResult | null {
+    // options-bag 판별: MatchBestOptions 키(scoring/strict)와 ScoringConfig 키
+    // (weights/graphemeBonus)는 겹치지 않는다. 빈 객체는 어느 쪽이든 결과 동일.
+    let scoring: ScoringConfig | undefined;
+    let strict: boolean;
+    if (scoringOrOptions != null && ("scoring" in scoringOrOptions || "strict" in scoringOrOptions)) {
+        scoring = (scoringOrOptions as MatchBestOptions).scoring;
+        strict = (scoringOrOptions as MatchBestOptions).strict ?? false;
+    } else {
+        scoring = scoringOrOptions as ScoringConfig | undefined;
+        strict = strictArg;
+    }
+
     if (query.subQueries) {
         return matchBestSplit(query.subQueries, target, scoring, strict);
     }
@@ -467,6 +506,69 @@ export function matchBest(
         const prevCands = allCandidates[qi - 1];
         const prevDP = dp[qi - 1];
         const currStates: DPState[][] = [];
+        const P = prevCands.length;
+        const gp = sc.gapPenalty;
+
+        // --- qi당 1회 전처리: gap/cons 전이를 O(C²) 전수 스캔 대신 O(C)로 ---
+        //
+        // gap 전이는 prev runLen과 무관하고(gap이 run을 끊음) 기여가 endTgi에 선형이다:
+        //   ps.score + gp·(s-1-endTgi) = (ps.score - gp·endTgi) + gp·(s-1)
+        // 이므로 prev 후보를 endTgi 오름차순으로 훑으며 (score - gp·endTgi)의
+        // running max를 유지하면, 각 현재 후보는 two-pointer 전진만으로 best gap
+        // predecessor를 얻는다. 현재 후보의 startTgi가 오름차순(수집 순서 보장)이라 가능.
+
+        // pci별 best state (gap 전이용 — 같은 pci면 score 최대인 state가 항상 우위)
+        const prevBestScore = new Array<number>(P);
+        const prevBestRunLen = new Array<number>(P);
+        for (let pci = 0; pci < P; pci++) {
+            let bs = -Infinity;
+            let br = -1;
+            const list = prevDP[pci];
+            for (let psi = 0; psi < list.length; psi++) {
+                const ps = list[psi];
+                if (ps.score > bs) {
+                    bs = ps.score;
+                    br = ps.runLen;
+                }
+            }
+            prevBestScore[pci] = bs;
+            prevBestRunLen[pci] = br;
+        }
+
+        // endTgi 오름차순 pci 순서 (spill 후보 때문에 endTgi는 수집 순서와 다를 수 있음)
+        const order = new Array<number>(P);
+        for (let pci = 0; pci < P; pci++) order[pci] = pci;
+        order.sort((a, b) => prevCands[a].endTgi - prevCands[b].endTgi);
+
+        // cons 전이(endTgi === s-1)용 endTgi → pci 목록. 후보는 startTgi당 1개라
+        // 한 endTgi 그룹의 총합이 P를 넘지 않는다 → cons 전이 총비용 O(C).
+        const consAt = new Map<number, number[]>();
+        for (let pci = 0; pci < P; pci++) {
+            const e = prevCands[pci].endTgi;
+            const l = consAt.get(e);
+            if (l) l.push(pci);
+            else consAt.set(e, [pci]);
+        }
+
+        let ptr = 0;
+        let gapMax = -Infinity; // max of (score - gp·endTgi) among endTgi <= s-2
+        let gapMaxPci = -1;
+        let gapMaxRunLen = -1;
+
+        const byRunLen = new Map<number, DPState>();
+        let considerParentPci = -1;
+        let considerParentRunLen = -1;
+        const consider = (score: number, runLen: number) => {
+            const cur = byRunLen.get(runLen);
+            if (cur === undefined || score > cur.score) {
+                byRunLen.set(runLen, {
+                    score,
+                    parentPci: considerParentPci,
+                    parentRunLen: considerParentRunLen,
+                    runLen,
+                });
+            }
+        };
 
         for (let ci = 0; ci < currCandidates.length; ci++) {
             const c = currCandidates[ci];
@@ -477,59 +579,54 @@ export function matchBest(
             const connected = c.internalRunLen === c.indices.length;
             const L = c.internalRunLen;
 
-            const byRunLen = new Map<number, DPState>();
-            const consider = (score: number, runLen: number, parentPci: number, parentRunLen: number) => {
-                const cur = byRunLen.get(runLen);
-                if (cur === undefined || score > cur.score) {
-                    byRunLen.set(runLen, { score, parentPci, parentRunLen, runLen });
-                }
-            };
+            byRunLen.clear();
 
-            // gap 경로 (prev.endTgi <= s - 2): prev runLen과 무관하게 결과 runLen = trailing.
-            // prev의 어느 상태가 최선인지 score 기준으로 모든 pci/runLen 스캔.
-            let bestGapScore = -Infinity;
-            let bestGapPci = -1;
-            let bestGapParentRunLen = -1;
-            for (let pci = 0; pci < prevCands.length; pci++) {
-                const prevEnd = prevCands[pci].endTgi;
-                if (prevEnd > s - 2) continue;
-                const gapDist = s - 1 - prevEnd;
-                const prevStatesList = prevDP[pci];
-                for (let psi = 0; psi < prevStatesList.length; psi++) {
-                    const ps = prevStatesList[psi];
-                    if (ps.score === -Infinity) continue;
-                    const cand = ps.score + sc.gapPenalty * gapDist;
-                    if (cand > bestGapScore) {
-                        bestGapScore = cand;
-                        bestGapPci = pci;
-                        bestGapParentRunLen = ps.runLen;
+            // gap 경로: endTgi <= s-2 인 prev 후보들을 prefix-max에 흡수 (two-pointer)
+            while (ptr < P) {
+                const pci = order[ptr];
+                if (prevCands[pci].endTgi > s - 2) break;
+                const bs = prevBestScore[pci];
+                if (bs !== -Infinity) {
+                    const adjusted = bs - gp * prevCands[pci].endTgi;
+                    if (adjusted > gapMax) {
+                        gapMax = adjusted;
+                        gapMaxPci = pci;
+                        gapMaxRunLen = prevBestRunLen[pci];
                     }
                 }
+                ptr++;
             }
-            if (bestGapScore !== -Infinity) {
-                consider(bestGapScore + posScore + standaloneBonus, trailing, bestGapPci, bestGapParentRunLen);
+            if (gapMax !== -Infinity) {
+                considerParentPci = gapMaxPci;
+                considerParentRunLen = gapMaxRunLen;
+                consider(gapMax + gp * (s - 1) + posScore + standaloneBonus, trailing);
             }
 
             // cons 경로 (prev.endTgi == s - 1): prev의 runLen별로 결과 runLen/delta가 다름.
             // connected: newRunLen = R + L, delta = L × (2R + L - 2) × cons
             // spill:     newRunLen = 1, delta = (2R - 1) × cons (prev run이 R+1로 닫히고 trailing 고립)
-            for (let pci = 0; pci < prevCands.length; pci++) {
-                if (prevCands[pci].endTgi !== s - 1) continue;
-                const prevStatesList = prevDP[pci];
-                for (let psi = 0; psi < prevStatesList.length; psi++) {
-                    const ps = prevStatesList[psi];
-                    if (ps.score === -Infinity) continue;
-                    const R = ps.runLen;
-                    let delta: number;
-                    let newRunLen: number;
-                    if (connected) {
-                        delta = L * (2 * R + L - 2) * sc.consecutive;
-                        newRunLen = R + L;
-                    } else {
-                        delta = (2 * R - 1) * sc.consecutive;
-                        newRunLen = 1;
+            const consList = consAt.get(s - 1);
+            if (consList !== undefined) {
+                for (let li = 0; li < consList.length; li++) {
+                    const pci = consList[li];
+                    const prevStatesList = prevDP[pci];
+                    for (let psi = 0; psi < prevStatesList.length; psi++) {
+                        const ps = prevStatesList[psi];
+                        if (ps.score === -Infinity) continue;
+                        const R = ps.runLen;
+                        let delta: number;
+                        let newRunLen: number;
+                        if (connected) {
+                            delta = L * (2 * R + L - 2) * sc.consecutive;
+                            newRunLen = R + L;
+                        } else {
+                            delta = (2 * R - 1) * sc.consecutive;
+                            newRunLen = 1;
+                        }
+                        considerParentPci = pci;
+                        considerParentRunLen = R;
+                        consider(ps.score + posScore + delta, newRunLen);
                     }
-                    consider(ps.score + posScore + delta, newRunLen, pci, R);
                 }
             }
 

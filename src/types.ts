@@ -248,6 +248,19 @@ export type ScoringConfig = {
 };
 
 /**
+ * `matchBest`의 옵션 객체 형태 (권장 시그니처).
+ *
+ * `matchBest(query, target, { scoring, strict })`. 기존 positional 시그니처
+ * `matchBest(query, target, scoring?, strict?)`는 deprecated로 유지된다.
+ */
+export type MatchBestOptions = {
+    /** 스코어 가중치 / grapheme 보너스 */
+    scoring?: ScoringConfig;
+    /** 엄격 매칭 모드 (기본 `false`) */
+    strict?: boolean;
+};
+
+/**
  * `createSearcher`에 넘기는 옵션. **세션 의미가 있는 모든 옵션은 여기서 고정**된다 —
  * 한 번 만든 searcher는 동일한 매칭 정책으로 모든 `.search()` 호출을 처리한다.
  * 다른 정책이 필요하면 새 searcher 인스턴스를 만든다.

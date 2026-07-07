@@ -9,6 +9,7 @@ export type {
     Atoms,
     FieldsMatchResult,
     GraphemeIndices,
+    MatchBestOptions,
     MatchField,
     MatchRange,
     MatchResult,

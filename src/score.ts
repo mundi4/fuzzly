@@ -58,6 +58,12 @@ const DEFAULT_RESOLVED: ResolvedScoring = {
     getBonus: NO_BONUS,
 };
 
+// config 객체 → ResolvedScoring 캐시. matchBest가 수천 회/키스트로크 호출되므로
+// 같은 config 참조를 반복 resolve하며 객체·클로저를 재생성하지 않는다.
+// graphemeBonus가 함수형이면 resolved가 target에 의존하므로 캐시하지 않는다
+// (searcher 계층은 entry당 ScoringConfig를 캐시하므로 배열형 bonus가 일반 경로).
+const resolvedCache = new WeakMap<ScoringConfig, ResolvedScoring>();
+
 export function resolveScoring(config: ScoringConfig | undefined, _target: Target): ResolvedScoring {
     if (config == null) return DEFAULT_RESOLVED;
 
@@ -65,6 +71,12 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
     const gb = config.graphemeBonus;
 
     if (w == null && gb == null) return DEFAULT_RESOLVED;
+
+    const cacheable = typeof gb !== "function";
+    if (cacheable) {
+        const hit = resolvedCache.get(config);
+        if (hit !== undefined) return hit;
+    }
 
     let getBonus: (gi: number) => number;
     if (gb == null) {
@@ -74,7 +86,7 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
     } else {
         getBonus = (gi) => (gi < gb.length ? Number(gb[gi] ?? 0) : 0);
     }
-    return {
+    const resolved: ResolvedScoring = {
         anchorFill: w?.anchorFill ?? SCORING.ANCHOR_FILL,
         positionZero: w?.positionZero ?? SCORING.POSITION_ZERO,
         boundary: w?.boundary ?? SCORING.BOUNDARY,
@@ -83,6 +95,8 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
         targetLengthPenalty: w?.targetLengthPenalty ?? SCORING.TARGET_LENGTH_PENALTY,
         getBonus,
     };
+    if (cacheable) resolvedCache.set(config, resolved);
+    return resolved;
 }
 
 /**
@@ -125,7 +139,11 @@ export function createGraphemeBonuses(
 
 /**
  * `MatchResult` 메타데이터만으로 간이 스코어를 계산한다.
- * `SearchOptions.score`에 전달하거나 직접 호출할 수 있다.
+ * `SearcherOptions.score`에 전달하거나 직접 호출할 수 있다.
+ *
+ * **주의**: DP 스코어(`result.score`)를 무시하는 메타데이터 전용 간이 휴리스틱이다
+ * (DP score 도입 이전의 유물). 일반적으로는 `score` 옵션을 생략하고 내장 DP 스코어를
+ * 쓰는 것이 낫고, 이 함수는 메타데이터 기반 커스텀 랭킹의 출발점 예시로만 유효하다.
  */
 export function defaultScore(result: MatchResult): number {
     let s = 0;

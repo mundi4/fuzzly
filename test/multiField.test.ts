@@ -106,7 +106,8 @@ describe("createSearcher 멀티필드", () => {
         expect(r[0].item.title).toContain("계약");
         expect(r[0].fields[0].result).not.toBeNull(); // title 에 substring
         expect(r[0].fields[1].result).toBeNull(); // creator 에는 없음
-        expect(r[0].score).toBe(0); // literal 은 스코어 없음
+        // literal 도 간이 스코어(best occurrence: positionZero/boundary/targetLengthPenalty)를 가진다 (issue #26)
+        expect(typeof r[0].score).toBe("number");
     });
 
     it("8. limit: 멀티필드 score 상위 N", () => {
