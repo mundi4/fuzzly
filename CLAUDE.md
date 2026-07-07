@@ -8,8 +8,9 @@
 
 ```bash
 npm test            # vitest run
-npm run build       # tsup → dist/ (esm + cjs + iife + dts)
+npm run build       # tsup → dist/ (esm + cjs + iife / react는 esm+cjs만 + dts)
 npm run check:fix   # biome check --write (format + lint + import sort)
+npm run bench       # vitest bench (bench/*.bench.ts — DP pathological, 10k cold, 세션 경로 기준선)
 ```
 
 소스/테스트 수정 후 커밋 전에 `npm run check:fix` + `npm test` 실행.
@@ -42,13 +43,22 @@ LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적
 ```
 atomsFlat: Uint16Array     — 전체 atom ID 연결
 atomStarts: Uint32Array    — grapheme i의 시작 offset
-atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼)
+atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼). 255 초과 시 RangeError (silent wrap 방지)
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음
 boundaryFlags: Uint8Array  — 0/1
 charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError
 ```
 
 grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
+
+**Case folding**: 쿼리(`buildQuery`)/타겟(`preprocessTarget`)/`matchLiteral`은 **같은** 길이보존
+folding(`internal/utils.foldCase`)을 쓴다. 소문자화로 UTF-16 길이가 변하는 문자(İ U+0130)는 원문을
+유지해 charIndexes/하이라이트 좌표계가 어긋나지 않게 한다. 어느 한쪽만 folding을 바꾸면 비ASCII
+대문자 쿼리가 매치 불가가 되므로 반드시 함께 수정할 것 (issue #23).
+
+**Grapheme 분할**: `internal/segmenter.eachGrapheme` — ASCII printable/완성형 한글/호환 자모만으로
+이루어진 문자열은 "1 code unit = 1 grapheme"이 보장되어 `Intl.Segmenter`를 우회한다 (전처리 ~3배).
+안전 집합 밖 문자가 하나라도 있으면 Segmenter 폴백.
 
 ### Query 레이아웃
 
@@ -67,14 +77,24 @@ fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. �
 
 ### match.ts
 
-2개 함수: `matchBest` (DP + scoring), `matchLiteral` (indexOf).
+2개 함수: `matchBest` (DP + scoring), `matchLiteral` (전 occurrence 스캔 + 간이 스코어).
 
 핵심 규칙:
 
 - **vowel-sticks-to-lead**: 쿼리 모음은 초성이 매치된 타겟 음절 안에서만 소비
 - tail spill은 이후 target grapheme의 **초성 위치**에만 허용
-- anchor extras는 쿼리 tail prefix와 정확히 일치해야 함
-- `matchBest` DP: candidate 수집 → Pareto frontier → gap/consecutive sweep → backtrack
+- anchor extras와 쿼리 tail은 **짧은 쪽 길이만큼 prefix로 상호 일치**해야 함.
+  잉여 ≥ tail이면 tail 전체가 anchor 내부에서 소비 (예: `달`→`닭` 매치 — 겹받침 타이핑
+  journey `다→달→닭`의 단조성 보장. 불일치는 여전히 reject: `염`→`연` X)
+- `matchBest` DP: candidate 수집 → runLen 버킷 DP → backtrack. **gap 전이는 endTgi 정렬
+  prefix-max two-pointer, cons 전이는 endTgi 그룹맵**으로 qi당 O(C log C) — 전수 O(C²) 스캔 금지
+  (반복 문자 타겟에서 T² 폭발, bench/fuzzly.bench.ts가 감시)
+- `matchBest(query, target, { scoring?, strict? })` options-bag이 권장 시그니처.
+  positional `(query, target, scoring?, strict?)`은 deprecated 오버로드로 유지
+
+`matchLiteral`은 모든 occurrence를 순회해 positionZero/boundary 간이 스코어가 최고인 위치를
+채택하고 `score`(targetLengthPenalty 포함)를 세팅한다 (issue #26). 멀티필드 literal의 아이템
+score는 필드별 literal score의 최대값.
 
 ### strict 모드
 
@@ -89,7 +109,16 @@ fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. �
 
 IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `strict=false`의 일반 lenient 매치로 자연 수용된다. 초성-only 쿼리(`ㅁㅇㅎㄱ`)도 동일하게 매치되며, 순위는 scoring(anchorFill)으로 하단에 밀려난다.
 
-**세션 최적화**: `createSearcher`는 `literal` 토글 시 세션을 리셋한다 (`strict`/`whitespace`는 인스턴스 단위로 고정이라 애초에 안 바뀜). 재사용 판정은 **토큰별 atom prefix**: 이전 쿼리의 모든 토큰이 각각 새 쿼리의 어떤 토큰의 atom-prefix이면 이전 매치만 재스캔한다. split 모드도 이 규칙으로 세션 재사용되며, 멀티필드도 동일 로직을 공유한다.
+**세션 최적화**: 세션 상태는 완료된 스캔들의 **스냅샷 히스토리 스택**(depth 32)이다. 재사용 판정은
+**토큰별 atom prefix**: 어떤 스냅샷의 모든 토큰이 각각 새 쿼리의 어떤 토큰의 atom-prefix이면 그
+스냅샷의 매치 집합만 재스캔한다 (호환 스냅샷 중 매치 집합이 가장 작은 것 선택). 순방향 타이핑은
+최신 스냅샷, **백스페이스(prefix 축소)는 조상 스냅샷**이 잡혀 full rescan을 피한다. split 모드도
+이 규칙으로 세션 재사용되며, 멀티필드도 동일 로직(`makeRuntime`)을 공유한다.
+
+**strict 세션 가드**: strict fuzzy 매칭은 atom-prefix 확장에 대해 단조가 아니므로 (`가` miss →
+`각` hit — 집합 증가), strict 인스턴스의 non-literal 스캔은 **토큰 완전 동일**일 때만 재사용한다.
+literal은 substring이라 문자열 확장에 단조 → strict와 무관하게 prefix 재사용. lenient 모드의
+단조성은 anchor-extras prefix 규칙(위 match.ts 절)이 보장하며, 겹받침 journey 테스트가 회귀 방어.
 
 ### whitespace 모드 (공백 처리)
 
@@ -122,6 +151,8 @@ IME 축약 복원(예: `막엲ㄱ` → `막연하게`)은 별도 규칙 없이 `
 핵심 포인트: anchorFill은 Σ(atoms²) 스케일이라 한 anchor에 atom이 몰린 완전 매치가 이 항 기준으로 유리하다. 다만 실제 총점은 다른 보너스/페널티 축과의 합으로 결정된다.
 
 **scoring config 캐시 계약 (issue #37)**: `SearcherOptions.scoring`/`MultiFieldSearcherOptions.scoring`이 함수 형태(`(target) => ScoringConfig`)이면 **entry 생성 시점(searcher 생성 / `add` / `replaceAll`)에 entry당(멀티필드는 필드 target당) 1회** 평가되어 캐시된다 — 매 search가 아니다. 따라서 scoring 함수는 **target만의 순수함수**여야 한다 (`createGraphemeBonuses` 같은 per-target 비용은 키스트로크마다 재계산되지 않는다). 캐시는 searcher 계층(`createSearcher`)의 책임이며, `matchBest`/`matchFields`를 직접 호출하는 low-level 경로는 기존대로 호출 시점에 resolve한다. 멀티필드는 pre-resolved config를 `MatchField.scoring`으로 전달하며, 이는 `matchFields`의 `opts.scoring`보다 우선한다.
+추가로 `resolveScoring`은 config 객체 → `ResolvedScoring`을 WeakMap 캐시한다 (graphemeBonus가
+함수형이면 target 의존이라 캐시 제외) — 같은 config 참조 반복 resolve 시 클로저 재생성 없음.
 
 ### 멀티필드 매칭 (`matchFields.ts`)
 
@@ -148,10 +179,12 @@ substring이며 score 0 (단일 필드 literal과 동일).
 ```
 buildQuery(input, opts?: { whitespace? }) → Query
 preprocessTarget(input) → Target
-matchBest(query, target, scoring?, strict?) → MatchResult | null (score 포함)
-matchLiteral(literal, target) → MatchResult | null
+matchBest(query, target, opts?: { scoring?, strict? }) → MatchResult | null (score 포함)
+  (positional matchBest(query, target, scoring?, strict?) 는 deprecated 오버로드)
+matchLiteral(literal, target) → MatchResult | null (best occurrence + 간이 score)
 matchFields(query, fields, opts?: { scoring?, strict? }) → FieldsMatchResult | null (토큰 단위 cross-field AND)
 buildMatchRanges(hitMaps[], target) → MatchRange[]
+segmentByRanges(text, ranges) → TextSegment[] ({ text, matched } 조각 — 하이라이트 렌더링 헬퍼)
 createSearcher(items, opts?: SearcherOptions) → Searcher (session 최적화 내장)
   searcher.search(queryInput, options?: SearchResultOptions) → SearchResult[]
   searcher.scan(queryInput, options?: SearchResultOptions) → ScanCursor<SearchResult>
@@ -181,6 +214,9 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 - `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`)
 - `SearcherOptions.strict?: boolean` (기본 `false`)
 - `ScanCursor<R>` — `scan()`이 반환하는 pull 기반 커서 (incremental/cancellable 스캔 + 정확한 total)
+- `SearchResult.score: number` — **required** (양쪽 경로 모두 항상 세팅)
+- `MatchBestOptions` = `{ scoring?, strict? }` — matchBest options-bag
+- `TextSegment` = `{ text, matched }` — `segmentByRanges` 반환 조각
 - `SearcherOptions.tiebreakKey?: (item) => number` — score 동점 시 2차 정렬 키. 순서는 **score desc → tiebreakKey asc**. entry 생성 시 1회 평가·캐시. limit(heap) 경로의 eviction 판정도 `(score, tie)` 비교라 top-N이 결정적. `(score, tie)` 완전 동점 항목의 top-N **진입**은 unspecified이나 반환 **순서**는 결정적. 멀티필드도 동일.
 
 ## Conventions
