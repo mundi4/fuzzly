@@ -11,6 +11,7 @@ import type {
     MultiFieldSearcherOptions,
     MultiFieldSearchResult,
     Query,
+    ScanCursor,
     ScoringConfig,
     Searcher,
     SearcherOptions,
@@ -83,7 +84,7 @@ const SEARCHER_ONLY_KEYS = new Set([
     "score",
     "tiebreakKey",
 ]);
-const SEARCH_ONLY_KEYS = new Set(["limit", "literal"]);
+const SEARCH_ONLY_KEYS = new Set(["limit", "literal", "filter"]);
 
 const isProd = (() => {
     try {
@@ -116,7 +117,8 @@ function warnUnknownKeys(opts: object | undefined, allowed: Set<string>, where: 
 // ---------------------------------------------------------------------------
 
 type Runtime<T, R> = {
-    search(queryInput: string, searchOpts?: SearchResultOptions): R[];
+    search(queryInput: string, searchOpts?: SearchResultOptions<T>): R[];
+    scan(queryInput: string, searchOpts?: SearchResultOptions<T>): ScanCursor<R>;
     add(...items: T[]): void;
     remove(predicate: (item: T) => boolean): void;
     replaceAll(items: readonly T[]): void;
@@ -138,106 +140,176 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
 ): Runtime<T, R> {
     let entries: E[] = items.map(toEntry);
 
-    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열.
+    // 세션 상태: 이전 쿼리의 토큰별 atom 시퀀스, literal 모드, 매치된 엔트리 인덱스 배열, per-call 필터.
     // split 모드는 토큰(subQuery)마다 atoms 를 가지므로 문자열 배열로 보관한다.
+    // 커밋은 스캔이 **완료되는 시점(마지막 엔트리 평가)** 에만 일어난다 — 중단된 스캔의 부분 매치
+    // 집합이 세션에 새지 않아 이후 prefix 쿼리 오염이 구조적으로 불가능.
     let prevTokens: string[] = [];
     let prevLiteral = false;
     let prevMatchedIndices: number[] | null = null;
+    let prevFilter: ((item: T) => boolean) | null = null;
+
+    // 뮤테이션 가드: add/remove/replaceAll 이 entries 인덱스를 무효화하므로 진행 중인 커서를 무효화한다.
+    let generation = 0;
 
     function resetSession() {
         prevTokens = [];
         prevLiteral = false;
         prevMatchedIndices = null;
+        prevFilter = null;
+    }
+
+    // 재사용 판정 / 쿼리 빌드 / 커서 상태 초기화는 커서 생성 시 1회. next() 로 budget 단위 진행한다.
+    function scan(queryInput: string, searchOpts: SearchResultOptions<T> = {}): ScanCursor<R> {
+        const limit = searchOpts.limit ?? 0;
+        const currentLiteral = !!searchOpts.literal;
+        const currentFilter = searchOpts.filter ?? null;
+
+        const query = currentLiteral ? null : buildQuery(queryInput, { whitespace });
+
+        // 세션 재사용 판정용 토큰 atoms. split 모드는 각 subQuery 의 atoms,
+        // 그 외는 쿼리 통째 1토큰, literal 은 소문자 입력 1토큰.
+        const currentTokens: string[] = currentLiteral
+            ? [queryInput.toLowerCase()]
+            : query?.subQueries
+              ? query.subQueries.map((s) => s.atoms)
+              : [query ? query.atoms : ""];
+
+        // 재사용 조건: 토큰 atom-prefix (매치 집합 단조 축소) AND literal 플래그 일치 AND 필터 호환.
+        // 필터 호환 = 동일 참조(재적용 무해) 또는 이전 무필터(superset 을 좁히는 방향이라 sound).
+        const flagsCompatible = prevLiteral === currentLiteral;
+        const filtersCompatible = currentFilter === prevFilter || prevFilter === null;
+        const canReuse =
+            prevTokens.length > 0 &&
+            prevTokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p))) &&
+            flagsCompatible &&
+            filtersCompatible &&
+            prevMatchedIndices !== null;
+
+        // 스캔 소스: 세션 재사용 시 이전 매치 인덱스 배열, 아니면 0..entries.length 숫자 범위.
+        const source: number[] | null = canReuse ? prevMatchedIndices : null;
+        const scanSize = source ? source.length : entries.length;
+        const capturedGeneration = generation;
+
+        const matchedIndices: number[] = [];
+        const heap: Ranked<R>[] = []; // limit > 0
+        const collected: Ranked<R>[] = []; // limit === 0
+
+        let position = 0;
+        let done = false;
+        let sorted: R[] | null = null; // 완료 시 1회 정렬 후 캐시
+
+        function evalOne(i: number): void {
+            const entry = entries[i];
+            // filter 는 evaluate 전에 평가 — 미통과 엔트리는 매칭 비용을 스킵하고 결과·total 에서 제외.
+            if (currentFilter && !currentFilter(entry.item)) return;
+
+            const ev = evaluate(entry, query, queryInput);
+            if (ev === null) return;
+
+            matchedIndices.push(i);
+            const tie = entry.tie;
+
+            if (limit > 0) {
+                if (heap.length < limit) {
+                    heapPush(heap, { score: ev.score, tie, value: ev.make() });
+                } else {
+                    // full heap: root 가 top-N 중 최악. 후보가 root 보다 상위 랭크면 교체.
+                    const root = heap[0];
+                    if (ev.score > root.score || (ev.score === root.score && tie < root.tie)) {
+                        heapReplace(heap, { score: ev.score, tie, value: ev.make() });
+                    }
+                }
+            } else {
+                collected.push({ score: ev.score, tie, value: ev.make() });
+            }
+        }
+
+        return {
+            next(budget?: number): boolean {
+                if (done) return true;
+                if (generation !== capturedGeneration) {
+                    throw new Error("fuzzly: searcher was mutated during scan");
+                }
+
+                const end = budget == null ? scanSize : Math.min(position + budget, scanSize);
+                for (; position < end; position++) {
+                    evalOne(source ? source[position] : position);
+                }
+
+                if (position >= scanSize) {
+                    done = true;
+                    // 완료 시점에만 세션 커밋. 커서 동시 사용은 last-completion-wins:
+                    // 늦게 완료된 이전 쿼리 커서가 세션을 되돌려도 (tokens ↔ matched set ↔ filter)
+                    // 쌍이 내부적으로 일관되므로 unsound 하지 않다 (다음 재사용이 덜 최적일 뿐).
+                    prevTokens = currentTokens;
+                    prevLiteral = currentLiteral;
+                    prevMatchedIndices = matchedIndices;
+                    prevFilter = currentFilter;
+                }
+                return done;
+            },
+            get done() {
+                return done;
+            },
+            get processed() {
+                return position;
+            },
+            get scanSize() {
+                return scanSize;
+            },
+            get total() {
+                return matchedIndices.length;
+            },
+            results(): R[] {
+                const buf = limit > 0 ? heap : collected;
+                if (done) {
+                    // 완료 후엔 buf 가 불변이므로 정렬 결과를 캐시.
+                    if (sorted === null)
+                        sorted = buf
+                            .slice()
+                            .sort(byRank)
+                            .map((w) => w.value);
+                    return sorted;
+                }
+                // 미완료: 진행 중 buf 를 훼손하지 않도록 복사본을 정렬한 snapshot.
+                return buf
+                    .slice()
+                    .sort(byRank)
+                    .map((w) => w.value);
+            },
+        };
     }
 
     return {
-        search(queryInput: string, searchOpts: SearchResultOptions = {}): R[] {
+        // search 는 scan 위에 재구현 — 코드 경로 단일화. 끝까지 진행 후 정렬 결과 반환.
+        search(queryInput: string, searchOpts: SearchResultOptions<T> = {}): R[] {
             warnUnknownKeys(searchOpts, SEARCH_ONLY_KEYS, "searcher.search options");
+            const cursor = scan(queryInput, searchOpts);
+            cursor.next();
+            return cursor.results();
+        },
 
-            const limit = searchOpts.limit ?? 0;
-            const currentLiteral = !!searchOpts.literal;
-
-            const query = currentLiteral ? null : buildQuery(queryInput, { whitespace });
-
-            // 세션 재사용 판정용 토큰 atoms. split 모드는 각 subQuery 의 atoms,
-            // 그 외는 쿼리 통째 1토큰, literal 은 소문자 입력 1토큰.
-            const currentTokens: string[] = currentLiteral
-                ? [queryInput.toLowerCase()]
-                : query?.subQueries
-                  ? query.subQueries.map((s) => s.atoms)
-                  : [query ? query.atoms : ""];
-
-            // literal 모드 토글 시 세션 단절.
-            // 이전 모든 토큰이 각각 어떤 현재 토큰의 atom-prefix 이면 매치 집합은 단조 축소 →
-            // 이전 매치만 재스캔. 동일 쿼리 재실행(prefix == 자기 자신)도 안전하게 재사용.
-            const flagsCompatible = prevLiteral === currentLiteral;
-            const canReuse =
-                prevTokens.length > 0 &&
-                prevTokens.every((p) => p.length > 0 && currentTokens.some((c) => c.startsWith(p))) &&
-                flagsCompatible &&
-                prevMatchedIndices !== null;
-            const sessionIndices = canReuse ? prevMatchedIndices : null;
-
-            const matchedIndices: number[] = [];
-            const scan = sessionIndices ?? iota(entries.length);
-
-            let results: R[];
-
-            if (limit > 0) {
-                const heap: Ranked<R>[] = [];
-
-                for (const i of scan) {
-                    const ev = evaluate(entries[i], query, queryInput);
-                    if (ev === null) continue;
-
-                    matchedIndices.push(i);
-                    const tie = entries[i].tie;
-
-                    if (heap.length < limit) {
-                        heapPush(heap, { score: ev.score, tie, value: ev.make() });
-                    } else {
-                        // full heap: root 가 top-N 중 최악. 후보가 root 보다 상위 랭크면 교체.
-                        const root = heap[0];
-                        if (ev.score > root.score || (ev.score === root.score && tie < root.tie)) {
-                            heapReplace(heap, { score: ev.score, tie, value: ev.make() });
-                        }
-                    }
-                }
-
-                results = heap.sort(byRank).map((w) => w.value);
-            } else {
-                const collected: Ranked<R>[] = [];
-
-                for (const i of scan) {
-                    const ev = evaluate(entries[i], query, queryInput);
-                    if (ev === null) continue;
-
-                    matchedIndices.push(i);
-                    collected.push({ score: ev.score, tie: entries[i].tie, value: ev.make() });
-                }
-
-                results = collected.sort(byRank).map((w) => w.value);
-            }
-
-            prevTokens = currentTokens;
-            prevLiteral = currentLiteral;
-            prevMatchedIndices = matchedIndices;
-
-            return results;
+        scan(queryInput: string, searchOpts: SearchResultOptions<T> = {}): ScanCursor<R> {
+            warnUnknownKeys(searchOpts, SEARCH_ONLY_KEYS, "searcher.scan options");
+            return scan(queryInput, searchOpts);
         },
 
         add(...newItems: T[]) {
             for (const item of newItems) entries.push(toEntry(item));
+            generation++;
             resetSession();
         },
 
         remove(predicate: (item: T) => boolean) {
             entries = entries.filter((e) => !predicate(e.item));
+            generation++;
             resetSession();
         },
 
         replaceAll(newItems: readonly T[]) {
             entries = newItems.map(toEntry);
+            generation++;
             resetSession();
         },
     };
@@ -430,10 +502,6 @@ function createMultiFieldSearcher<T>(
         whitespace,
         evaluate,
     );
-}
-
-function* iota(n: number): Generator<number> {
-    for (let i = 0; i < n; i++) yield i;
 }
 
 function makeSearchResult<T>(item: T, target: Target, result: MatchResult): SearchResult<T> {
