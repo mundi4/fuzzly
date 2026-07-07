@@ -1,5 +1,5 @@
 import { atomIdToChar, SPACE_ID } from "./internal/atomRegistry";
-import segmenter from "./internal/segmenter";
+import { eachGrapheme } from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms, foldCase } from "./internal/utils";
 import type { Query, QueryGrapheme, WhitespaceMode } from "./types";
 
@@ -47,12 +47,11 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
 
     const graphemes: QueryGrapheme[] = [];
 
-    for (const seg of segmenter.segment(cleaned)) {
-        const rawGrapheme = seg.segment;
+    eachGrapheme(cleaned, (rawGrapheme) => {
         const atoms = decomposeToAtoms(rawGrapheme);
 
         if (whitespace === "ignore" && atoms.length === 1 && atoms[0] === SPACE_ID) {
-            continue;
+            return;
         }
 
         const { vowelIndex, tailIndex } = computeAtomRoles(atoms);
@@ -63,7 +62,7 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
             vowelIndex,
             tailIndex,
         });
-    }
+    });
 
     // session prefix check용 문자열 (createSearcher에서 사용)
     let atomsStr = "";

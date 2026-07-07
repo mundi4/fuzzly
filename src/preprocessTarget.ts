@@ -1,5 +1,5 @@
 import { DASH_ID, DOT_ID, SPACE_ID, UNDERSCORE_ID } from "./internal/atomRegistry";
-import segmenter from "./internal/segmenter";
+import { eachGrapheme } from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms, foldCase } from "./internal/utils";
 import type { Atoms, Target } from "./types";
 
@@ -49,10 +49,7 @@ export function preprocessTarget(input: string): Target {
     const tmpGraphemeIndexes: number[] = []; // sparse — normalizedInput 길이만큼
     let graphemeIndex = 0;
 
-    for (const seg of segmenter.segment(normalizedInput)) {
-        const cluster = seg.segment;
-        const startIndex = seg.index;
-
+    eachGrapheme(normalizedInput, (cluster, startIndex) => {
         tmpCharIndexes[graphemeIndex] = startIndex;
 
         // decomposeToAtoms는 모든 grapheme cluster를 처리:
@@ -67,7 +64,7 @@ export function preprocessTarget(input: string): Target {
 
         tmpAtomArrays[graphemeIndex] = atoms;
         graphemeIndex++;
-    }
+    });
 
     const graphemeCount = graphemeIndex;
 
@@ -90,9 +87,7 @@ export function preprocessTarget(input: string): Target {
         // atomLens 는 Uint8Array — 255 초과 시 silent wrap 으로 오매칭이 생기므로 명시적으로 실패.
         // 정상 텍스트에선 도달 불가 (결합문자 255개 초과 단일 grapheme 같은 적대적 입력 한정).
         if (atoms.length > 0xff) {
-            throw new RangeError(
-                `preprocessTarget: grapheme at index ${i} has ${atoms.length} atoms (max 255)`,
-            );
+            throw new RangeError(`preprocessTarget: grapheme at index ${i} has ${atoms.length} atoms (max 255)`);
         }
         atomStarts[i] = atomOffset;
         atomLens[i] = atoms.length;

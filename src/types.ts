@@ -359,7 +359,8 @@ export type SearchResult<T = string> = {
     item: T;
     target: Target;
     result: MatchResult;
-    score?: number;
+    /** 정렬에 사용된 최종 스코어 (`score` 콜백 지정 시 그 반환값, 아니면 DP score). 항상 세팅된다. */
+    score: number;
     ranges: () => MatchRange[];
 };
 

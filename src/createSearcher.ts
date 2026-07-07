@@ -432,11 +432,7 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
         const score = scoreFn ? scoreFn(result, t) : (result.score ?? 0);
         return {
             score,
-            make: () => {
-                const sr = makeSearchResult(entry.item, t, result);
-                sr.score = score;
-                return sr;
-            },
+            make: () => makeSearchResult(entry.item, t, result, score),
         };
     };
 
@@ -554,11 +550,12 @@ function createMultiFieldSearcher<T>(
     );
 }
 
-function makeSearchResult<T>(item: T, target: Target, result: MatchResult): SearchResult<T> {
+function makeSearchResult<T>(item: T, target: Target, result: MatchResult, score: number): SearchResult<T> {
     return {
         item,
         target,
         result,
+        score,
         ranges: () => buildMatchRanges([result.indices], target),
     };
 }
