@@ -14,8 +14,9 @@ import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, Target } 
  * **기본 동작 (strict=false)**: 모든 한글 grapheme을 관대하게 매칭.
  * - lead+vowel은 anchor 음절 내부에서 매치
  * - tail은 anchor 또는 다음 음절로 spill 가능
- * - anchor 내부에 남는 atoms(잉여)는 쿼리 tail prefix와 정확히 일치해야 함
+ * - anchor 내부에 남는 atoms(잉여)와 쿼리 tail은 짧은 쪽 길이만큼 prefix로 서로 일치해야 함
  *   (예: 쿼리 "읽"=[ㅇㅣㄹㄱ] vs anchor "일"=[ㅇㅣㄹ] → 잉여 ㄹ이 tail prefix ㄹ과 일치 → OK, ㄱ spill.
+ *    쿼리 "달"=[ㄷㅏㄹ] vs anchor "닭"=[ㄷㅏㄹㄱ] → tail ㄹ이 잉여 ㄹㄱ의 prefix → OK (겹받침 journey 단조성).
  *    쿼리 "염"=[ㅇㅕㅁ] vs anchor "연"=[ㅇㅕㄴ] → 잉여 ㄴ이 tail ㅁ과 불일치 → reject)
  *
  * **strict 모드 (strict=true)**: 모음이 포함된 쿼리 grapheme은 target anchor와
@@ -82,8 +83,13 @@ function atomsEqual(qAtoms: Atoms, target: Target, tgi: number): boolean {
 }
 
 // tail이 있는 lenient grapheme의 anchor acceptance 보조 체크.
-// anchor의 qLeadVowelEnd 이후 잉여 atoms는 쿼리 tail atoms의 prefix와 정확히 일치해야 함.
-// 불일치 시 잉여 atom이 어떤 쿼리 atom에도 대응되지 않는 false positive가 발생하기 때문.
+// anchor의 qLeadVowelEnd 이후 잉여 atoms와 쿼리 tail atoms는 짧은 쪽 길이만큼 서로 prefix로 일치해야 함.
+// - 잉여 < tail: 잉여 전체가 tail prefix와 일치 → 나머지 tail은 spill (예: 읽 vs 일 → ㄹ 일치, ㄱ spill)
+// - 잉여 >= tail: tail 전체가 잉여 prefix와 일치 → tail이 anchor 내부에서 전부 소비
+//   (예: 달 vs 닭 → tail ㄹ이 잉여 ㄹㄱ의 prefix. 겹받침 타이핑 journey 다→달→닭의 단조성 보장.
+//    tail 소비 후 남는 잉여 ㄱ은 no-tail 쿼리의 잉여와 동일하게 허용)
+// 불일치 시(예: 염 vs 연 → 잉여 ㄴ ≠ tail ㅁ) 잉여 atom이 어떤 쿼리 atom에도
+// 대응되지 않는 false positive가 발생하므로 reject.
 function checkAnchorExtrasPrefix(
     qAtoms: Atoms,
     qTailStart: number,
@@ -95,8 +101,8 @@ function checkAnchorExtrasPrefix(
     const anchorExtras = tLen - qLeadVowelEnd;
     if (anchorExtras <= 0) return true;
     const qTailLen = qAtoms.length - qTailStart;
-    if (anchorExtras > qTailLen) return false;
-    for (let i = 0; i < anchorExtras; i++) {
+    const n = anchorExtras < qTailLen ? anchorExtras : qTailLen;
+    for (let i = 0; i < n; i++) {
         if (qAtoms[qTailStart + i] !== target.atomsFlat[tStart + qLeadVowelEnd + i]) return false;
     }
     return true;
