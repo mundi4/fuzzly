@@ -272,6 +272,92 @@ describe("createSearcher", () => {
             const results = searcher.search("막엲ㄱ");
             expect(results.map((r) => r.item)).toContain("막연하게");
         });
+
+        it("strict + 순방향 타이핑: prefix 세션 재사용이 결과를 잃지 않는다 (가→각)", () => {
+            // strict 매칭은 atom-prefix 확장에 대해 단조가 아니므로 (가: miss, 각: hit)
+            // 토큰이 완전 동일할 때만 세션을 재사용해야 한다.
+            const searcher = createSearcher(["각도기"], { strict: true });
+            const journey = ["ㄱ", "가", "각"].map((q) => searcher.search(q).map((r) => r.item));
+            const fresh = createSearcher(["각도기"], { strict: true })
+                .search("각")
+                .map((r) => r.item);
+            expect(fresh).toEqual(["각도기"]);
+            expect(journey[2]).toEqual(fresh);
+        });
+
+        it("strict + 동일 쿼리 반복은 결과 동일 (동일 토큰 재사용 경로)", () => {
+            const searcher = createSearcher(["각도기", "다른것"], { strict: true });
+            const r1 = searcher.search("각").map((r) => r.item);
+            const r2 = searcher.search("각").map((r) => r.item);
+            expect(r2).toEqual(r1);
+        });
+    });
+
+    describe("세션 히스토리 — 겹받침 journey / 백스페이스 복원", () => {
+        it("겹받침 순방향 타이핑에서 항목이 소실되지 않는다 (ㄷ→다→달→닭)", () => {
+            const items = ["닭갈비", "다른것", "달걀"];
+            const searcher = createSearcher(items);
+            const steps = ["ㄷ", "다", "달", "닭"];
+            let prev: string[] | null = null;
+            for (const q of steps) {
+                const got = searcher.search(q).map((r) => r.item);
+                const fresh = createSearcher(items)
+                    .search(q)
+                    .map((r) => r.item);
+                expect([...got].sort(), `step "${q}"`).toEqual([...fresh].sort());
+                if (prev) {
+                    for (const g of got) expect(prev, `step "${q}" 단조성`).toContain(g);
+                }
+                prev = got;
+            }
+            expect(prev).toContain("닭갈비");
+        });
+
+        it("split 모드 겹받침 journey (갉작)", () => {
+            const items = ["갉작갉작", "무관한것"];
+            const opts = { whitespace: "split" as const };
+            const searcher = createSearcher(items, opts);
+            for (const q of ["ㄱ", "가", "갈", "갉", "갉ㅈ", "갉자", "갉작"]) {
+                const got = searcher.search(q).map((r) => r.item);
+                const fresh = createSearcher(items, opts)
+                    .search(q)
+                    .map((r) => r.item);
+                expect([...got].sort(), `step "${q}"`).toEqual([...fresh].sort());
+            }
+        });
+
+        it("백스페이스: prefix 축소 시 조상 스냅샷 재사용 — fresh 와 결과 동일", () => {
+            const items = ["파일 열기", "파일 저장", "폴더 열기", "무관"];
+            const searcher = createSearcher(items);
+            const seq = ["ㅍ", "파", "파이", "파일", "파일 ㅇ", "파일", "파이", "파", "팔"];
+            for (const q of seq) {
+                const got = searcher
+                    .search(q)
+                    .map((r) => r.item)
+                    .sort();
+                const fresh = createSearcher(items)
+                    .search(q)
+                    .map((r) => r.item)
+                    .sort();
+                expect(got, `step "${q}"`).toEqual(fresh);
+            }
+        });
+
+        it("백스페이스 + filter: 무필터 조상 스냅샷 재사용도 정확", () => {
+            const items = ["가나다", "가나", "나다"];
+            const searcher = createSearcher(items);
+            searcher.search("가나");
+            const f = (item: string) => item.length > 2;
+            const got = searcher
+                .search("가", { filter: f })
+                .map((r) => r.item)
+                .sort();
+            const fresh = createSearcher(items)
+                .search("가", { filter: f })
+                .map((r) => r.item)
+                .sort();
+            expect(got).toEqual(fresh);
+        });
     });
 
     describe("literal 모드 세션 키 (per-call)", () => {

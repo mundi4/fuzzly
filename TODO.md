@@ -13,10 +13,9 @@
 ### [x] literal을 search-time 인자로
 `SearchResultOptions` 에 남김. literal 모드 토글 시에만 세션 단절.
 
-### [ ] composingIndex를 options 객체로 흡수
-현재 `search(query, options, composingIndex)` 3번째 positional 인자를
-`search(query, { literal?, limit?, composingIndex? })`로 통일.
-호출부 가독성과 일관성 향상.
+### [x] composingIndex를 options 객체로 흡수 — 해소됨 (stale)
+`search()`에서 composingIndex positional 인자 자체가 제거되어 해당 없음.
+composingIndex는 react 레이어(`useFuzzlyInput`)에만 존재.
 
 ### [ ] score vs scoring 이름·문서 정리
 - `scoring` → `scoringConfig` (DP 내부 가중치임을 명확히)
@@ -37,10 +36,10 @@
 - 기본값 `"literal"` → `"ignore"`로 변경
 - `SearchOptions.literal`(substring 플래그)은 **그대로 유지**
 
-### [ ] split 모드 토큰별 prefix 캐시 reuse
-현재 `whitespace: "split"` 모드는 outer Query의 `atoms` 가 빈 문자열이라
-세션 prefix reuse가 자동으로 비활성된다. 토큰 단위 캐시 (각 sub-query의
-이전 매치 인덱스 reuse) 는 별도 PR — sub-query 동치성 / 순서 정의가 필요.
+### [x] split 모드 토큰별 prefix 캐시 reuse — 구현됨
+세션 재사용 판정이 토큰별 atom-prefix로 동작하며 split 모드도 동일 규칙으로
+재사용된다. 추가로 세션이 스냅샷 히스토리 스택으로 확장되어 백스페이스(prefix
+축소)도 조상 스냅샷으로 복원된다 (issue #28-2).
 
 ### [ ] caller API에서 낯선 용어/내부 개념 노출 최소화
 caller는 원문 char index(UTF-16 offset)와 score/hit 여부만 알면 충분하다.

@@ -1,11 +1,7 @@
 import { atomIdToChar, SPACE_ID } from "./internal/atomRegistry";
-import segmenter from "./internal/segmenter";
-import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
+import { eachGrapheme } from "./internal/segmenter";
+import { computeAtomRoles, decomposeToAtoms, foldCase } from "./internal/utils";
 import type { Query, QueryGrapheme, WhitespaceMode } from "./types";
-
-function normalizeForMatch(input: string): string {
-    return input.replace(/[A-Z]/g, (char) => char.toLowerCase());
-}
 
 /**
  * 사용자 입력 문자열을 grapheme 단위로 분해하여 Query 객체를 생성한다.
@@ -36,7 +32,9 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
         return buildSplitQuery(input);
     }
 
-    const cleaned = normalizeForMatch(input);
+    // preprocessTarget 과 동일한 folding — 쿼리/타겟 정규화가 어긋나면 비ASCII 대문자
+    // 쿼리(É, Привет 등)가 fuzzy 경로에서 절대 매치되지 않는다.
+    const cleaned = foldCase(input);
 
     if (cleaned === "") {
         return {
@@ -49,12 +47,11 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
 
     const graphemes: QueryGrapheme[] = [];
 
-    for (const seg of segmenter.segment(cleaned)) {
-        const rawGrapheme = seg.segment;
+    eachGrapheme(cleaned, (rawGrapheme) => {
         const atoms = decomposeToAtoms(rawGrapheme);
 
         if (whitespace === "ignore" && atoms.length === 1 && atoms[0] === SPACE_ID) {
-            continue;
+            return;
         }
 
         const { vowelIndex, tailIndex } = computeAtomRoles(atoms);
@@ -65,7 +62,7 @@ export function buildQuery(input: string, opts?: { whitespace?: WhitespaceMode }
             vowelIndex,
             tailIndex,
         });
-    }
+    });
 
     // session prefix check용 문자열 (createSearcher에서 사용)
     let atomsStr = "";

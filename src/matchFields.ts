@@ -1,8 +1,9 @@
-import { matchBest, mergeMatchResults } from "./match";
+import { matchBestImpl, mergeMatchResults } from "./match";
 import type { FieldsMatchResult, MatchField, MatchResult, Query, ScoringConfig, Target } from "./types";
 
 // D1: 부호 보존 배율. weight를 올리면 양·음수 전 구간에서 항상 유리해진다.
-function applyWeight(score: number, w: number): number {
+// createSearcher 의 literal 멀티필드 경로도 동일 규칙을 공유한다. index.ts 재수출 금지.
+export function applyWeight(score: number, w: number): number {
     return score >= 0 ? score * w : score / w;
 }
 
@@ -50,9 +51,9 @@ export function matchFields(
         let bestWeighted = -Infinity;
         let bestResult: MatchResult | null = null;
         for (let i = 0; i < fields.length; i++) {
-            const r = matchBest(token, fields[i].target, fieldCfgs[i], strict);
+            const r = matchBestImpl(token, fields[i].target, fieldCfgs[i], strict);
             if (r === null) continue;
-            const weighted = applyWeight(r.score ?? 0, fields[i].weight ?? 1);
+            const weighted = applyWeight(r.score, fields[i].weight ?? 1);
             if (weighted > bestWeighted) {
                 // strict > : 동점이면 낮은 인덱스 유지 (D3)
                 bestWeighted = weighted;

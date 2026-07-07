@@ -106,10 +106,22 @@ describe("strict 모드", () => {
             expect(matchBest(q, t)?.indices).toEqual([0, 1]);
         });
 
-        it("'알' → '앏' 매치 X (anchorExtras > qTailLen)", () => {
+        it("'알' → '앏' 매치 O (tail ㄹ이 anchor 잉여 ㄹㅂ의 prefix — 겹받침 journey 단조성)", () => {
             const q = buildQuery("알");
             const t = preprocessTarget("앏");
-            expect(matchBest(q, t)).toBeNull();
+            expect(matchBest(q, t)?.indices).toEqual([0]);
+        });
+
+        it("'달' → '닭갈비' 매치 O (tail ㄹ이 잉여 ㄹㄱ의 prefix)", () => {
+            const q = buildQuery("달");
+            const t = preprocessTarget("닭갈비");
+            expect(matchBest(q, t)).not.toBeNull();
+        });
+
+        it("'알' strict → '앏' 매치 X (strict는 정확 일치 유지)", () => {
+            const q = buildQuery("알");
+            const t = preprocessTarget("앏");
+            expect(matchBest(q, t, undefined, true)).toBeNull();
         });
 
         it("'가' → '값' 매치 O (qTailStart=-1, 규칙 미적용)", () => {

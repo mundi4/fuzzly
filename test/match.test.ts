@@ -293,6 +293,34 @@ describe("matchBest - 유닛 테스트", () => {
             assertJourneyMatches("자산관리전략협의회", ["자산관리ㅈㄹㅎㅇㅎ"]);
             assertJourneyMatches("자산관리전략협의회", ["자산관리전략협의회"]);
         });
+
+        it("겹받침 타겟 — 정상 타이핑 journey 전 단계 매치 (다→달→닭 단조성)", () => {
+            // 겹받침으로 끝나는 음절의 중간 상태(달)는 tail이 anchor 잉여의 prefix로
+            // 소비되는 규칙으로 매치되어야 한다. 이 단조성이 깨지면 세션 재사용이
+            // 해당 항목을 영구 소실시킨다.
+            assertJourneyMatches("닭갈비", ["닭갈비"]);
+            assertJourneyMatches("값도", ["값도"]);
+            assertJourneyMatches("앉다", ["앉다"]);
+            assertJourneyMatches("갉작갉작", ["갉작"]);
+        });
+
+        it("겹받침 journey — 매치 집합의 단조 감소 (부분집합 검증)", () => {
+            const targets = ["닭갈비", "다른것", "달걀", "닮은꼴"].map(preprocessTarget);
+            const steps = ["ㄷ", "다", "달", "닭"];
+            let prevSet: Set<string> | null = null;
+            for (const step of steps) {
+                const q = buildQuery(step)!;
+                const matched = new Set(targets.filter((t) => matchBest(q, t) !== null).map((t) => t.input));
+                if (prevSet !== null) {
+                    for (const m of matched) {
+                        expect(prevSet.has(m), `step "${step}": "${m}"이 이전 단계에서 미매치`).toBe(true);
+                    }
+                }
+                prevSet = matched;
+            }
+            // 최종 단계에서 닭갈비는 살아 있어야 한다
+            expect(prevSet?.has("닭갈비")).toBe(true);
+        });
     });
 
     describe("MatchResult 메타데이터", () => {

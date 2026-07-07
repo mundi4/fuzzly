@@ -150,8 +150,17 @@ export type MatchResult = {
     runCount: number;
     /** 단어 경계에서 매치된 grapheme 수 */
     boundaryHits: number;
-    /** `matchBest`가 DP로 계산한 최적 정렬 스코어 */
-    score?: number;
+    /**
+     * 매치 스코어 — `matchBest`는 DP 최적 정렬 스코어, `matchLiteral`은 best-occurrence
+     * 간이 스코어. 모든 생산 경로가 항상 세팅한다.
+     */
+    score: number;
+};
+
+/** `segmentByRanges`가 반환하는 텍스트 조각. `matched`가 true면 하이라이트 대상. */
+export type TextSegment = {
+    text: string;
+    matched: boolean;
 };
 
 /**
@@ -231,6 +240,11 @@ export type ScoringWeights = {
     targetLengthPenalty?: number;
 };
 
+/**
+ * 스코어 설정. **불변으로 취급된다** — `matchBest`/`matchLiteral`은 config 객체 참조를
+ * 키로 resolve 결과를 캐시하므로, 가중치를 바꿀 때는 필드를 제자리 수정하지 말고
+ * 새 객체를 만들어 넘겨야 한다 (searcher 계층도 entry 생성 시점에 config 를 캐시한다).
+ */
 export type ScoringConfig = {
     weights?: ScoringWeights;
     /**
@@ -245,6 +259,19 @@ export type ScoringConfig = {
      * graphemeBonus 항만으로 유리해지지는 않는다.
      */
     graphemeBonus?: number[] | ((graphemeIndex: number, target: Target) => number);
+};
+
+/**
+ * `matchBest`의 옵션 객체 형태 (권장 시그니처).
+ *
+ * `matchBest(query, target, { scoring, strict })`. 기존 positional 시그니처
+ * `matchBest(query, target, scoring?, strict?)`는 deprecated로 유지된다.
+ */
+export type MatchBestOptions = {
+    /** 스코어 가중치 / grapheme 보너스 */
+    scoring?: ScoringConfig;
+    /** 엄격 매칭 모드 (기본 `false`) */
+    strict?: boolean;
 };
 
 /**
@@ -346,7 +373,8 @@ export type SearchResult<T = string> = {
     item: T;
     target: Target;
     result: MatchResult;
-    score?: number;
+    /** 정렬에 사용된 최종 스코어 (`score` 콜백 지정 시 그 반환값, 아니면 DP score). 항상 세팅된다. */
+    score: number;
     ranges: () => MatchRange[];
 };
 
