@@ -216,6 +216,26 @@ export function normalizeCharToCompat(ch: string): string {
     return ch; // 이미 호환자모거나 일반 문자
 }
 
+/**
+ * 길이 보존 case folding — 쿼리와 타겟이 반드시 **같은 함수**를 써야 atom ID가 일치한다.
+ *
+ * `toLowerCase()` 전체 적용이 기본이지만, 소문자화로 UTF-16 길이가 변하는 문자
+ * (예: İ U+0130 → i̇ 2 code units)가 있으면 원문 offset 좌표계(charIndexes/하이라이트)가
+ * 밀리므로, 그런 문자만 원문을 유지하고 나머지는 code point 단위로 folding한다.
+ */
+export function foldCase(input: string): string {
+    const lowered = input.toLowerCase();
+    // Unicode 소문자 매핑은 축소되지 않으므로(1→N만 존재) 전체 길이가 보존되면
+    // 모든 문자의 매핑이 1:1 — 그대로 사용 (fast path, 사실상 모든 실 입력).
+    if (lowered.length === input.length) return lowered;
+    let out = "";
+    for (const cp of input) {
+        const l = cp.toLowerCase();
+        out += l.length === cp.length ? l : cp;
+    }
+    return out;
+}
+
 // atoms Uint16Array에서 중성/종성 시작 인덱스 계산.
 export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex: number } {
     let vowelIndex = -1;

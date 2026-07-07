@@ -1,4 +1,5 @@
 import { isConsonantLUT } from "./internal/atomRegistry";
+import { foldCase } from "./internal/utils";
 import type { ResolvedScoring } from "./score";
 import { resolveScoring } from "./score";
 import type { Atoms, MatchResult, Query, QueryGrapheme, ScoringConfig, Target } from "./types";
@@ -54,7 +55,7 @@ export function matchLiteral(literal: string, target: Target): MatchResult | nul
     if (literal === "") {
         return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0 };
     }
-    const text = literal.toLowerCase();
+    const text = foldCase(literal);
     const foundAt = target.normalizedInput.indexOf(text);
     if (foundAt < 0) return null;
 

@@ -1,6 +1,6 @@
 import { DASH_ID, DOT_ID, SPACE_ID, UNDERSCORE_ID } from "./internal/atomRegistry";
 import segmenter from "./internal/segmenter";
-import { computeAtomRoles, decomposeToAtoms } from "./internal/utils";
+import { computeAtomRoles, decomposeToAtoms, foldCase } from "./internal/utils";
 import type { Atoms, Target } from "./types";
 
 /**
@@ -39,7 +39,9 @@ export function preprocessTarget(input: string): Target {
         throw new RangeError(`preprocessTarget: input length ${input.length} exceeds Uint16Array limit (65535)`);
     }
 
-    const normalizedInput = input.toLowerCase();
+    // 길이 보존 folding (buildQuery/matchLiteral 과 동일 함수) — normalizedInput 의
+    // UTF-16 offset 이 원문 input 과 1:1 이어야 charIndexes/하이라이트 좌표계가 유지된다.
+    const normalizedInput = foldCase(input);
 
     // Pass 1: temp JS arrays에 수집
     const tmpAtomArrays: Atoms[] = [];
@@ -85,6 +87,13 @@ export function preprocessTarget(input: string): Target {
     let atomOffset = 0;
     for (let i = 0; i < graphemeCount; i++) {
         const atoms = tmpAtomArrays[i];
+        // atomLens 는 Uint8Array — 255 초과 시 silent wrap 으로 오매칭이 생기므로 명시적으로 실패.
+        // 정상 텍스트에선 도달 불가 (결합문자 255개 초과 단일 grapheme 같은 적대적 입력 한정).
+        if (atoms.length > 0xff) {
+            throw new RangeError(
+                `preprocessTarget: grapheme at index ${i} has ${atoms.length} atoms (max 255)`,
+            );
+        }
         atomStarts[i] = atomOffset;
         atomLens[i] = atoms.length;
         atomsFlat.set(atoms, atomOffset);
