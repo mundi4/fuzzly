@@ -51,6 +51,31 @@ describe("case folding 통일 (issue #23)", () => {
         // 길이 보존을 위해 İ 는 소문자화하지 않는다 — 'İ' 쿼리로는 매치, 'i' 로는 비매치가 일관 동작
         expect(matchBest(buildQuery("İ"), t)).not.toBeNull();
     });
+
+    it("그리스어 Final Sigma 문맥 무관 folding — ΠΑΣ 타이핑 journey 단조성", () => {
+        // toLowerCase 는 단어 끝 Σ 를 ς 로, 중간 Σ 를 σ 로 폴딩한다 (문맥 의존).
+        // foldCase 가 ς→σ 로 통일하지 않으면 쿼리 "ΠΑΣ"(끝 Σ→ς)가 타겟 "παστα"(중간 σ)와
+        // 어긋나 journey 중간에 결과가 사라진다.
+        const t = preprocessTarget("ΠΑΣΤΑ");
+        for (const q of ["Π", "ΠΑ", "ΠΑΣ", "ΠΑΣΤ", "ΠΑΣΤΑ"]) {
+            expect(matchBest(buildQuery(q), t), `query "${q}"`).not.toBeNull();
+        }
+        expect(matchLiteral("ΠΑΣ", t)).not.toBeNull();
+        expect(matchLiteral("λογος".toUpperCase(), preprocessTarget("λογος"))).not.toBeNull();
+    });
+
+    it("literal 세션 토큰과 matchLiteral 이 같은 folding 을 사용 (İ journey)", async () => {
+        const { createSearcher } = await import("../src");
+        const items = ["İstanbul", "istanbul-plain"];
+        const s = createSearcher(items);
+        s.search("I", { literal: true });
+        const got = s.search("İ", { literal: true }).map((r) => r.item);
+        const fresh = createSearcher(items)
+            .search("İ", { literal: true })
+            .map((r) => r.item);
+        expect(got).toEqual(fresh);
+        expect(got).toContain("İstanbul");
+    });
 });
 
 describe("atomLens 오버플로 가드 (issue #24)", () => {

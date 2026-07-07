@@ -62,4 +62,41 @@ describe("matchBest options-bag 시그니처 (issue #30-1)", () => {
         const boosted = matchBest(q, t, { weights: { anchorFill: 500 } });
         expect(boosted!.score!).toBeGreaterThan(base!.score!);
     });
+
+    it("혼합 객체(weights + strict)는 ScoringConfig 로 해석 — weights 가 조용히 drop 되지 않는다", () => {
+        const q = buildQuery("안녕");
+        const t = preprocessTarget("안녕하세요");
+        const viaConfig = matchBest(q, t, { weights: { anchorFill: 500 } });
+        // strict 키가 섞여 있어도 config 키(weights)가 우선 — weights 적용 유지 (dev 경고 대상)
+        const original = console.warn;
+        console.warn = () => {};
+        try {
+            const mixed = matchBest(q, t, { weights: { anchorFill: 500 }, strict: false } as never);
+            expect(mixed?.score).toBe(viaConfig?.score);
+        } finally {
+            console.warn = original;
+        }
+    });
+
+    it("options-bag + positional strict 병용 시 positional strict 존중", () => {
+        const q = buildQuery("으");
+        const t = preprocessTarget("은행");
+        // bag 에 strict 가 없으면 4번째 positional 인자를 따른다 (반쪽 마이그레이션 보호)
+        expect(matchBest(q, t, { scoring: undefined }, true)).toBeNull();
+    });
+
+    it("matchLiteral 이 ScoringConfig weights 를 따른다", () => {
+        const t = preprocessTarget("긴 타겟 문자열 파일 어쩌고");
+        const base = matchLiteral("파일", t);
+        const noLenPenalty = matchLiteral("파일", t, { weights: { targetLengthPenalty: 0 } });
+        expect(noLenPenalty!.score!).toBeGreaterThan(base!.score!);
+    });
+
+    it("searcher literal 검색이 인스턴스 scoring 가중치를 따른다", () => {
+        // targetLengthPenalty 를 끄면 긴 타겟이 boundary 우위로 짧은 word-internal 타겟을 앞선다
+        const items = ["내파일함", "아주 길고 긴 텍스트 안의 파일 항목"];
+        const noPenalty = createSearcher(items, { scoring: { weights: { targetLengthPenalty: 0, positionZero: 0 } } });
+        const r = noPenalty.search("파일", { literal: true });
+        expect(r[0].item).toBe("아주 길고 긴 텍스트 안의 파일 항목"); // boundary 매치 우위
+    });
 });

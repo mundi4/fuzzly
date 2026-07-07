@@ -62,6 +62,7 @@ const DEFAULT_RESOLVED: ResolvedScoring = {
 // 같은 config 참조를 반복 resolve하며 객체·클로저를 재생성하지 않는다.
 // graphemeBonus가 함수형이면 resolved가 target에 의존하므로 캐시하지 않는다
 // (searcher 계층은 entry당 ScoringConfig를 캐시하므로 배열형 bonus가 일반 경로).
+// **계약**: ScoringConfig 는 불변으로 취급 — 제자리 수정은 반영되지 않는다 (types.ts JSDoc 참조).
 const resolvedCache = new WeakMap<ScoringConfig, ResolvedScoring>();
 
 export function resolveScoring(config: ScoringConfig | undefined, _target: Target): ResolvedScoring {

@@ -1,10 +1,4 @@
-import type { MatchRange } from "./types";
-
-/** `segmentByRanges`가 반환하는 텍스트 조각. `matched`가 true면 하이라이트 대상. */
-export type TextSegment = {
-    text: string;
-    matched: boolean;
-};
+import type { MatchRange, TextSegment } from "./types";
 
 /**
  * 원문 문자열을 `MatchRange[]` 기준으로 하이라이트 조각 배열로 분할한다 —
@@ -19,9 +13,9 @@ export type TextSegment = {
  *
  * @example
  * ```ts
- * const [r] = searcher.search("ㅍㅇ");
+ * const [r] = searcher.search("ㅍㅇ"); // 타겟 "파일 열기" — ㅇ은 "일"의 초성에 매치 (연속 run 우대)
  * segmentByRanges(r.target.input, r.ranges());
- * // → [{ text: "파", matched: true }, { text: "일 ", matched: false }, { text: "열", matched: true }, …]
+ * // → [{ text: "파일", matched: true }, { text: " 열기", matched: false }]
  * ```
  */
 export function segmentByRanges(text: string, ranges: readonly MatchRange[]): TextSegment[] {

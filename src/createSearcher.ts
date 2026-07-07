@@ -1,7 +1,8 @@
 import { buildMatchRanges } from "./buildMatchRanges";
 import { buildQuery } from "./buildQuery";
-import { matchBest, matchLiteral } from "./match";
-import { matchFields } from "./matchFields";
+import { foldCase, isProd } from "./internal/utils";
+import { matchBestImpl, matchLiteralFolded } from "./match";
+import { applyWeight, matchFields } from "./matchFields";
 import { preprocessTarget } from "./preprocessTarget";
 import type {
     FieldsMatchResult,
@@ -86,24 +87,21 @@ const SEARCHER_ONLY_KEYS = new Set([
 ]);
 const SEARCH_ONLY_KEYS = new Set(["limit", "literal", "filter"]);
 
-const isProd = (() => {
-    try {
-        // globalThis 경유로 접근해 @types/node 없이도 타입체크된다 (브라우저 소비자 tsc 호환)
-        const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
-        return g.process?.env?.NODE_ENV === "production";
-    } catch {
-        return false;
-    }
-})();
-
 // 동일 옵션 객체 재검사 방지 캐시 — 소비자가 옵션 객체를 재사용(메모이즈)하는 일반 패턴에서
 // 키 순회를 첫 호출 1회로 줄인다 (경고 중복 방지 겸용).
-const checkedOpts = new WeakSet<object>();
+// 같은 객체가 다른 검증 컨텍스트(createSearcher vs search — 허용 키 집합이 다름)에 재사용될 수
+// 있으므로 캐시는 allowed 집합별로 분리한다.
+const checkedOptsByContext = new WeakMap<Set<string>, WeakSet<object>>();
 
 function warnUnknownKeys(opts: object | undefined, allowed: Set<string>, where: string): void {
     if (isProd || opts == null) return;
-    if (checkedOpts.has(opts)) return;
-    checkedOpts.add(opts);
+    let checked = checkedOptsByContext.get(allowed);
+    if (checked === undefined) {
+        checked = new WeakSet<object>();
+        checkedOptsByContext.set(allowed, checked);
+    }
+    if (checked.has(opts)) return;
+    checked.add(opts);
     for (const k of Object.keys(opts)) {
         if (!allowed.has(k)) {
             const hint = SEARCHER_ONLY_KEYS.has(k)
@@ -161,7 +159,10 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
     items: readonly T[],
     toEntry: (item: T) => E,
     whitespace: WhitespaceMode,
-    strict: boolean,
+    // evaluate 가 구현하는 fuzzy 매칭이 "토큰 atom-prefix 확장 ⇒ 매치 집합 단조 축소"를
+    // 만족하는가. lenient 는 true, strict 는 false (가 miss → 각 hit 로 집합이 커질 수 있음).
+    // false 면 non-literal 스캔은 토큰 완전 동일일 때만 세션을 재사용한다.
+    prefixMonotonic: boolean,
     evaluate: Evaluate<E, R>,
 ): Runtime<T, R> {
     let entries: E[] = items.map(toEntry);
@@ -188,11 +189,15 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
         const currentFilter = searchOpts.filter ?? null;
 
         const query = currentLiteral ? null : buildQuery(queryInput, { whitespace });
+        // literal 은 스캔당 1회만 fold — per-entry 재-fold 를 피하고, 세션 토큰과 실제 매칭
+        // (matchLiteralFolded)이 반드시 같은 정규화 문자열을 보게 한다 (toLowerCase 와 foldCase 가
+        // 갈리면 İ 같은 길이 변화 문자에서 prefix 재사용이 unsound 해진다).
+        const evalInput = currentLiteral ? foldCase(queryInput) : queryInput;
 
         // 세션 재사용 판정용 토큰 atoms. split 모드는 각 subQuery 의 atoms,
-        // 그 외는 쿼리 통째 1토큰, literal 은 소문자 입력 1토큰.
+        // 그 외는 쿼리 통째 1토큰, literal 은 fold 된 입력 1토큰.
         const currentTokens: string[] = currentLiteral
-            ? [queryInput.toLowerCase()]
+            ? [evalInput]
             : query?.subQueries
               ? query.subQueries.map((s) => s.atoms)
               : [query ? query.atoms : ""];
@@ -207,7 +212,7 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
         //
         // 히스토리에서 호환 스냅샷 중 매치 집합이 가장 작은 것을 고른다
         // (백스페이스 후엔 최신 스냅샷이 아닌 조상 스냅샷이 호환된다).
-        const exactTokensOnly = strict && !currentLiteral;
+        const exactTokensOnly = !prefixMonotonic && !currentLiteral;
         let source: number[] | null = null;
         for (let h = history.length - 1; h >= 0; h--) {
             const s = history[h];
@@ -238,7 +243,7 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
             // filter 는 evaluate 전에 평가 — 미통과 엔트리는 매칭 비용을 스킵하고 결과·total 에서 제외.
             if (currentFilter && !currentFilter(entry.item)) return;
 
-            const ev = evaluate(entry, query, queryInput);
+            const ev = evaluate(entry, query, evalInput);
             if (ev === null) return;
 
             matchedIndices.push(i);
@@ -277,8 +282,11 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
                     // 완료 시점에만 세션 커밋 (히스토리 스택에 push). 커서 동시 사용은
                     // last-completion-wins: 늦게 완료된 이전 쿼리 커서의 스냅샷이 나중에 쌓여도
                     // (tokens ↔ matched set ↔ filter) 쌍이 내부적으로 일관되므로 unsound 하지 않다.
-                    // 빈 토큰 스냅샷은 어차피 재사용 불가라 push 하지 않는다.
-                    if (currentTokens.length > 0 && currentTokens.every((t) => t.length > 0)) {
+                    // 빈 토큰 스냅샷은 어차피 재사용 불가라 push 하지 않고, 조상 스냅샷 대비
+                    // 전혀 좁혀지지 않은 스냅샷(matched == source)도 재사용 가치가 동일하므로
+                    // push 하지 않는다 (히스토리 메모리 절약 — 조상이 같은 집합을 제공).
+                    const narrowed = source === null || matchedIndices.length < source.length;
+                    if (narrowed && currentTokens.length > 0 && currentTokens.every((t) => t.length > 0)) {
                         const top = history[history.length - 1];
                         if (
                             top !== undefined &&
@@ -343,7 +351,10 @@ function makeRuntime<T, E extends { item: T; tie: number }, R>(
         },
 
         add(...newItems: T[]) {
-            for (const item of newItems) entries.push(toEntry(item));
+            // 전부 변환한 뒤에 push — toEntry(preprocessTarget)가 도중에 throw 해도
+            // entries 부분 추가 + 세션 미리셋 상태(신규 항목이 스캔에서 누락)가 남지 않는다.
+            const newEntries = newItems.map(toEntry);
+            for (const e of newEntries) entries.push(e);
             generation++;
             resetSession();
         },
@@ -426,10 +437,13 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
         queryInput,
     ) => {
         const t = entry.target;
-        const result = query ? matchBest(query, t, entry.scoring, strict) : matchLiteral(queryInput, t);
+        // literal 경로의 queryInput 은 scan() 이 미리 fold 한 문자열 (per-entry 재-fold 없음).
+        const result = query
+            ? matchBestImpl(query, t, entry.scoring, strict)
+            : matchLiteralFolded(queryInput, t, entry.scoring);
         if (result === null) return null;
 
-        const score = scoreFn ? scoreFn(result, t) : (result.score ?? 0);
+        const score = scoreFn ? scoreFn(result, t) : result.score;
         return {
             score,
             make: () => makeSearchResult(entry.item, t, result, score),
@@ -444,7 +458,7 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
             return { item, target, scoring: resolveScoringConfig?.(target), tie: tiebreakKey ? tiebreakKey(item) : 0 };
         },
         whitespace,
-        strict,
+        !strict,
         evaluate,
     );
 }
@@ -512,14 +526,17 @@ function createMultiFieldSearcher<T>(
             }
             result = matchFields(query, fieldBuf, { strict });
         } else {
-            // literal 멀티필드: any-field substring. score 는 필드별 literal 간이 스코어의 최대값
-            // (best field 기준 — 단일 필드 literal 의 best-occurrence 스코어와 대칭).
+            // literal 멀티필드: any-field substring. score 는 필드별 literal 간이 스코어에
+            // fuzzy 경로와 동일한 부호 보존 weight 를 적용한 최대값 (best field 기준).
             const perField: (MatchResult | null)[] = [];
             let bestLit = -Infinity;
-            for (const t of targets) {
-                const lit = matchLiteral(queryInput, t);
+            for (let f = 0; f < targets.length; f++) {
+                const lit = matchLiteralFolded(queryInput, targets[f], entry.scorings ? entry.scorings[f] : staticCfg);
                 perField.push(lit);
-                if (lit !== null && (lit.score ?? 0) > bestLit) bestLit = lit.score ?? 0;
+                if (lit !== null) {
+                    const weighted = applyWeight(lit.score, fields[f].weight ?? 1);
+                    if (weighted > bestLit) bestLit = weighted;
+                }
             }
             result = bestLit !== -Infinity ? { score: bestLit, perField } : null;
         }
@@ -545,7 +562,7 @@ function createMultiFieldSearcher<T>(
             };
         },
         whitespace,
-        strict,
+        !strict,
         evaluate,
     );
 }

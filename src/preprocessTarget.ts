@@ -16,8 +16,11 @@ import type { Atoms, Target } from "./types";
  * 한 번만 기록해두고(예: IndexedDB의 meta 레코드 하나), 로드 시 불일치하면
  * 저장된 Target 전체를 재전처리한다. 무효화 판단 주체는 소비자이며, fuzzly는
  * 이 버전 값만 노출한다.
+ *
+ * 이력: v2 — normalizedInput 산출이 `toLowerCase()`에서 길이보존·문맥무관 `foldCase`로
+ * 변경 (İ 원문 유지, Σ/ς 통일). v1 시절 직렬화된 Target 은 좌표계·atom 인코딩이 다르다.
  */
-export const PREPROCESS_VERSION = 1;
+export const PREPROCESS_VERSION = 2;
 
 /**
  * 검색 대상 문자열을 grapheme 단위로 분해하고 flat typed array 레이아웃으로 저장한다.

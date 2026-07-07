@@ -216,24 +216,41 @@ export function normalizeCharToCompat(ch: string): string {
     return ch; // 이미 호환자모거나 일반 문자
 }
 
+// dev/prod 판정 — globalThis 경유로 접근해 @types/node 없이도 타입체크된다 (브라우저 소비자 tsc 호환).
+export const isProd = (() => {
+    try {
+        const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
+        return g.process?.env?.NODE_ENV === "production";
+    } catch {
+        return false;
+    }
+})();
+
 /**
- * 길이 보존 case folding — 쿼리와 타겟이 반드시 **같은 함수**를 써야 atom ID가 일치한다.
+ * 길이 보존 + 문맥 무관 case folding — 쿼리와 타겟이 반드시 **같은 함수**를 써야
+ * atom ID가 일치한다.
  *
- * `toLowerCase()` 전체 적용이 기본이지만, 소문자화로 UTF-16 길이가 변하는 문자
- * (예: İ U+0130 → i̇ 2 code units)가 있으면 원문 offset 좌표계(charIndexes/하이라이트)가
- * 밀리므로, 그런 문자만 원문을 유지하고 나머지는 code point 단위로 folding한다.
+ * `toLowerCase()` 전체 적용이 기본이지만 두 가지를 정규화한다:
+ * - **길이 보존**: 소문자화로 UTF-16 길이가 변하는 문자(예: İ U+0130 → i̇ 2 code units)는
+ *   원문을 유지해 offset 좌표계(charIndexes/하이라이트)가 밀리지 않게 한다.
+ * - **문맥 무관**: `toLowerCase()`의 Final_Sigma 규칙(단어 끝 Σ → ς, 그 외 → σ)은 같은
+ *   문자가 쿼리/타겟의 위치에 따라 다르게 폴딩되게 만든다 (쿼리 "ΠΑΣ"의 ς ≠ 타겟
+ *   "παστα"의 σ → 매치 실패 + journey 비단조). ς(U+03C2)를 σ(U+03C3)로 통일한다.
  */
 export function foldCase(input: string): string {
-    const lowered = input.toLowerCase();
-    // Unicode 소문자 매핑은 축소되지 않으므로(1→N만 존재) 전체 길이가 보존되면
-    // 모든 문자의 매핑이 1:1 — 그대로 사용 (fast path, 사실상 모든 실 입력).
-    if (lowered.length === input.length) return lowered;
-    let out = "";
-    for (const cp of input) {
-        const l = cp.toLowerCase();
-        out += l.length === cp.length ? l : cp;
+    let lowered = input.toLowerCase();
+    if (lowered.length !== input.length) {
+        // Unicode 소문자 매핑은 축소되지 않으므로(1→N만 존재) 길이가 변했다면 어떤 문자가
+        // 확장된 것 — code point 단위로 재시도하고 확장되는 문자만 원문 유지.
+        lowered = "";
+        for (const cp of input) {
+            const l = cp.toLowerCase();
+            lowered += l.length === cp.length ? l : cp;
+        }
     }
-    return out;
+    // Final_Sigma 문맥 제거 (위치 무관 동일 폴딩 보장)
+    if (lowered.indexOf("ς") >= 0) lowered = lowered.replace(/ς/g, "σ");
+    return lowered;
 }
 
 // atoms Uint16Array에서 중성/종성 시작 인덱스 계산.

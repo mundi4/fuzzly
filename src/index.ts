@@ -5,7 +5,6 @@ export { matchBest, matchLiteral } from "./match";
 export { matchFields } from "./matchFields";
 export { PREPROCESS_VERSION, preprocessTarget } from "./preprocessTarget";
 export { createGraphemeBonuses, defaultScore, SCORING } from "./score";
-export type { TextSegment } from "./segmentByRanges";
 export { segmentByRanges } from "./segmentByRanges";
 export type {
     Atoms,
@@ -30,5 +29,6 @@ export type {
     SearchResult,
     SearchResultOptions,
     Target,
+    TextSegment,
     WhitespaceMode,
 } from "./types";

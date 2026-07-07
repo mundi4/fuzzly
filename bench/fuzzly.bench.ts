@@ -1,4 +1,5 @@
 import { bench, describe } from "vitest";
+import type { Target } from "../src";
 import { buildQuery, createSearcher, matchBest, preprocessTarget } from "../src";
 
 /**
@@ -50,13 +51,15 @@ describe("matchBest — pathological 반복 문자 (O(C²) 회귀 감시)", () =
     });
 });
 
+// Target 은 미리 빌드해 hydrate — searcher 생성 비용에서 preprocess 를 제외하고
+// 스캔(매칭) 비용만 측정한다. 세션 히스토리 오염을 피하려고 iteration 마다 fresh searcher 를
+// 쓴다. cold/세션 벤치가 반드시 같은 코퍼스를 재도록 셋업은 모듈 스코프에서 1회만 만든다.
+const ITEMS_10K = makeItems(10_000);
+const TARGETS_10K = new Map(ITEMS_10K.map((s) => [s, preprocessTarget(s)]));
+const hydrate = { target: (s: string) => TARGETS_10K.get(s) as Target };
+
 describe("createSearcher 10k — cold 키스트로크", () => {
-    // Target 은 미리 빌드해 hydrate — 매 iteration 의 searcher 생성 비용에서
-    // preprocess 를 제외하고 스캔(매칭) 비용만 측정한다. 세션 히스토리 오염을 피하려고
-    // iteration 마다 fresh searcher 를 쓴다.
-    const items = makeItems(10_000);
-    const targets = new Map(items.map((s) => [s, preprocessTarget(s)]));
-    const hydrate = { target: (s: string) => targets.get(s) as ReturnType<typeof preprocessTarget> };
+    const items = ITEMS_10K;
 
     bench("cold 'ㅅ' (limit 20)", () => {
         createSearcher(items, hydrate).search("ㅅ", { limit: 20 });
@@ -68,9 +71,7 @@ describe("createSearcher 10k — cold 키스트로크", () => {
 });
 
 describe("createSearcher 10k — 세션 경로", () => {
-    const items = makeItems(10_000);
-    const targets = new Map(items.map((s) => [s, preprocessTarget(s)]));
-    const hydrate = { target: (s: string) => targets.get(s) as ReturnType<typeof preprocessTarget> };
+    const items = ITEMS_10K;
 
     bench("forward journey ㅍ→파→파이→파일 (세션 재사용)", () => {
         const s = createSearcher(items, hydrate);

@@ -51,10 +51,11 @@ charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeE
 
 grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
 
-**Case folding**: 쿼리(`buildQuery`)/타겟(`preprocessTarget`)/`matchLiteral`은 **같은** 길이보존
-folding(`internal/utils.foldCase`)을 쓴다. 소문자화로 UTF-16 길이가 변하는 문자(İ U+0130)는 원문을
-유지해 charIndexes/하이라이트 좌표계가 어긋나지 않게 한다. 어느 한쪽만 folding을 바꾸면 비ASCII
-대문자 쿼리가 매치 불가가 되므로 반드시 함께 수정할 것 (issue #23).
+**Case folding**: 쿼리(`buildQuery`)/타겟(`preprocessTarget`)/`matchLiteral`/searcher literal
+세션 토큰은 **같은** folding(`internal/utils.foldCase`)을 쓴다. 길이보존(İ U+0130은 원문 유지 —
+charIndexes/하이라이트 좌표계 보존) + 문맥무관(Final_Sigma ς→σ 통일 — 위치 따라 다른 폴딩 방지).
+어느 한쪽만 folding을 바꾸면 비ASCII 쿼리 매치 불가·세션 재사용 unsound가 생기므로 반드시 함께
+수정하고, normalizedInput 산출이 바뀌면 `PREPROCESS_VERSION`을 bump할 것 (v2 = foldCase 전환).
 
 **Grapheme 분할**: `internal/segmenter.eachGrapheme` — ASCII printable/완성형 한글/호환 자모만으로
 이루어진 문자열은 "1 code unit = 1 grapheme"이 보장되어 `Intl.Segmenter`를 우회한다 (전처리 ~3배).
@@ -90,15 +91,19 @@ fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. �
   prefix-max two-pointer, cons 전이는 endTgi 그룹맵**으로 qi당 O(C log C) — 전수 O(C²) 스캔 금지
   (반복 문자 타겟에서 T² 폭발, bench/fuzzly.bench.ts가 감시)
 - `matchBest(query, target, { scoring?, strict? })` options-bag이 권장 시그니처.
-  positional `(query, target, scoring?, strict?)`은 deprecated 오버로드로 유지
+  positional `(query, target, scoring?, strict?)`은 deprecated 오버로드로 유지.
+  판별은 public 진입점 1회 — 내부 핫패스는 `matchBestImpl`(비공개 export)을 직접 호출.
+  config 키(weights/graphemeBonus)가 있으면 ScoringConfig로 해석하고 혼합 객체는 dev 경고
 
-`matchLiteral`은 모든 occurrence를 순회해 positionZero/boundary 간이 스코어가 최고인 위치를
-채택하고 `score`(targetLengthPenalty 포함)를 세팅한다 (issue #26). 멀티필드 literal의 아이템
-score는 필드별 literal score의 최대값.
+`matchLiteral(literal, target, scoring?)`은 모든 occurrence를 순회해 positionZero/boundary 간이
+스코어가 최고인 위치를 채택하고 `score`(targetLengthPenalty 포함)를 세팅한다 (issue #26).
+가중치는 `scoring.weights`를 따른다 (fuzzy와 동일 config로 튜닝). 멀티필드 literal의 아이템
+score는 필드별 literal score에 부호 보존 weight를 적용한 최대값. searcher는 스캔당 1회 fold한
+문자열로 내부 진입점(`matchLiteralFolded`)을 호출한다 — 세션 토큰과 동일 정규화 보장.
 
 ### strict 모드
 
-**`SearchOptions.strict`** (`matchBest` 4번째 인자):
+**`SearcherOptions.strict`** (`matchBest`에는 `{ strict }` 옵션으로 전달):
 
 | 값                   | 동작                                                                                                      |
 | -------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -172,7 +177,7 @@ literal은 substring이라 문자열 확장에 단조 → strict와 무관하게
 빈 배열·필드에 key/target 둘 다 없음도 TypeError, weight ≤ 0은 생성 시점 RangeError. 각 필드는
 `key`(→`preprocessTarget`) 또는 `target`(prebuilt hydrate) 공급. 단일·멀티는 세션 재사용/heap/incremental 로직을
 공유 런타임(`makeRuntime`)으로 통일하고 per-entry `evaluate` 클로저만 다르다. literal 멀티필드는 any-field
-substring이며 score 0 (단일 필드 literal과 동일).
+substring이며, score 는 필드별 literal 간이 스코어에 부호 보존 weight 를 적용한 최대값 (best field).
 
 ## Public API (`src/index.ts`)
 
@@ -181,7 +186,7 @@ buildQuery(input, opts?: { whitespace? }) → Query
 preprocessTarget(input) → Target
 matchBest(query, target, opts?: { scoring?, strict? }) → MatchResult | null (score 포함)
   (positional matchBest(query, target, scoring?, strict?) 는 deprecated 오버로드)
-matchLiteral(literal, target) → MatchResult | null (best occurrence + 간이 score)
+matchLiteral(literal, target, scoring?) → MatchResult | null (best occurrence + 간이 score)
 matchFields(query, fields, opts?: { scoring?, strict? }) → FieldsMatchResult | null (토큰 단위 cross-field AND)
 buildMatchRanges(hitMaps[], target) → MatchRange[]
 segmentByRanges(text, ranges) → TextSegment[] ({ text, matched } 조각 — 하이라이트 렌더링 헬퍼)
