@@ -1,7 +1,7 @@
 # 핸드오프: lightseek의 transparent whitespace 채택
 
 > 대상: lightseek 작업 세션. 이 문서만으로 작업 가능하도록 자체 완결로 작성됨.
-> fuzzly 쪽 구현은 완료·검토 통과 상태 (브랜치 `feat/transparent-whitespace`, 커밋 `5bcbc55`).
+> fuzzly 쪽 구현은 완료·검토 통과 후 `main`에 머지됨 (커밋 `5bcbc55`).
 
 ## 1. fuzzly에 무엇이 생겼나 (1분 요약)
 
@@ -27,8 +27,8 @@ preprocessTarget(input, { whitespace: "transparent" })  // 기본값은 "keep" (
 
 ## 2. 의존성
 
-- fuzzly `main` 머지 전이면: `"fuzzly": "github:mundi4/fuzzly#feat/transparent-whitespace"`
-  (prepare 스크립트가 설치 시 dist를 빌드한다). 머지 후에는 main/태그로 복귀.
+- `main`에 머지 완료: `"fuzzly": "github:mundi4/fuzzly"` 재설치로 반영
+  (prepare 스크립트가 설치 시 dist를 빌드한다).
 - `PREPROCESS_VERSION`이 **2 → 3**으로 bump됨 (`Target.whitespace` 필드 추가).
 - `Target`에 자기서술 필드 `whitespace: "keep" | "transparent"`가 생겼다 (직렬화 가능).
   **주의**: 같은 버전 3 안에서 두 모드가 공존하므로 버전만으로 모드 구분이 안 된다 —
