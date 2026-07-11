@@ -61,6 +61,11 @@ function buildMatchResult(indices: number[], target: Target, score: number): Mat
  * 동일한 config 로 literal 랭킹도 튜닝된다.
  *
  * occurrence 수는 실제 텍스트에서 소수이므로 전 occurrence 순회 비용은 무시 가능.
+ *
+ * **알려진 edge (transparent 타겟)**: literal 경로는 whitespace 옵션을 무시하는 raw
+ * substring 경로이므로, 공백을 포함한 literal이 `whitespace: "transparent"` 타겟에
+ * 매치되면 공백 위치의 indices/하이라이트는 공백의 이웃 grapheme 기준이 된다
+ * (공백은 grapheme을 소비하지 않아 다음 grapheme으로 매핑됨).
  */
 export function matchLiteral(literal: string, target: Target, scoring?: ScoringConfig): MatchResult | null {
     return matchLiteralFolded(foldCase(literal), target, scoring);
@@ -75,6 +80,10 @@ export function matchLiteralFolded(text: string, target: Target, scoring?: Scori
     if (text === "") {
         return { indices: [], startsAtZero: false, runCount: 0, boundaryHits: 0, score: 0 };
     }
+    // 전량 공백 transparent 타겟: normalizedInput에는 공백이 남아 있어 literal " "가
+    // "매치"될 수 있지만 대응 grapheme이 없어 좌표가 깨진다 — grapheme이 하나도 없는
+    // 타겟은 비어있지 않은 literal에 매치 불가로 처리.
+    if (target.graphemeCount === 0) return null;
     const normalized = target.normalizedInput;
     let foundAt = normalized.indexOf(text);
     if (foundAt < 0) return null;
@@ -484,12 +493,30 @@ export function matchBest(
  * options-bag 판별을 마친 내부 진입점. searcher/matchFields 의 per-entry 핫패스가
  * 판별 비용 없이 호출한다. `index.ts`에서 re-export하지 않는다.
  */
+// preserve × transparent 비호환 경고는 1회만 — 스캔 경로에서 엔트리마다 반복 출력 방지.
+let warnedPreserveTransparent = false;
+
 export function matchBestImpl(
     query: Query,
     target: Target,
     scoring: ScoringConfig | undefined,
     strict: boolean,
 ): MatchResult | null {
+    // 공백 포함 preserve 쿼리는 transparent 타겟에 구조적으로 매치 불가
+    // (타겟에 공백 grapheme이 없음). silent miss 대신 dev 모드에서 시그널.
+    if (
+        !isProd &&
+        !warnedPreserveTransparent &&
+        query.whitespace === "preserve" &&
+        target.whitespace === "transparent" &&
+        query.input.includes(" ")
+    ) {
+        warnedPreserveTransparent = true;
+        // eslint-disable-next-line no-console
+        console.warn(
+            "[fuzzly] matchBest: query with whitespace: 'preserve' contains spaces but the target was preprocessed with whitespace: 'transparent' — spaces are not graphemes in this target, so the query can never match. Use query whitespace 'ignore'/'split' or a 'keep' target.",
+        );
+    }
     if (query.subQueries) {
         return matchBestSplit(query.subQueries, target, scoring, strict);
     }

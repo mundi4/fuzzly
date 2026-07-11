@@ -41,13 +41,31 @@ export interface QueryGrapheme {
 /**
  * 쿼리 공백 처리 정책.
  *
- * - `"preserve"`: 공백을 일반 atom으로 취급. `"ab cd"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일)
+ * - `"preserve"`: 공백을 일반 atom으로 취급. `"ab cd"`는 target에 literal 공백이 있어야 매치 (VSCode 커맨드 검색 스타일).
+ *   **주의**: `whitespace: "transparent"`로 전처리된 타겟과는 비호환 — transparent 타겟에는
+ *   공백 grapheme이 없으므로 공백 포함 preserve 쿼리는 구조적으로 매치 불가 (dev 모드 경고).
  * - `"ignore"` (기본): 쿼리에서 공백 grapheme을 제거 후 매칭. `"ab cd"` ≡ `"abcd"` (VSCode 파일 검색 스타일)
  * - `"split"`: 공백 boundary로 sub-query를 분리한 뒤 순서 무관 AND. 모든 sub-query가 매치되어야 hit.
  *   동일 토큰 또는 다른 토큰의 atom-prefix인 토큰은 redundant로 제거된다 (`"안녕 안"` → `["안녕"]`).
  *   각 sub-query의 best match를 독립적으로 산출하고 indices는 union, score/메타는 Σ 단순합.
  */
 export type WhitespaceMode = "preserve" | "ignore" | "split";
+
+/**
+ * 타겟 공백 처리 정책 (`preprocessTarget`의 `whitespace` 옵션).
+ *
+ * - `"keep"` (기본): 공백을 독립 grapheme으로 방출 (기존 동작). 공백이 grapheme 인덱스를
+ *   소비하므로 공백 양옆 매치는 연속 run으로 이어지지 않는다.
+ * - `"transparent"`: **U+0020 공백만** grapheme으로 방출하지 않는다. 쿼리 축 기본값
+ *   `whitespace: "ignore"`가 제거하는 것과 정확히 대칭 — 공백 낀 near-exact 매치가
+ *   연속 run으로 인정되어 공백 없는 타겟과 대등하게 스코어링된다.
+ *   탭/개행/NBSP/`_`/`-`/`.`는 투명화하지 않는다 (쿼리에서 제거되지 않으므로).
+ *   스킵된 공백 다음에 방출되는 grapheme은 단어 경계(boundary)로 표시된다.
+ *   `graphemeCount`가 공백을 세지 않으므로 `targetLengthPenalty × T`에서 공백이 빠진다.
+ *
+ * @see {@link WhitespaceMode} — 쿼리 축 정책. `"preserve"` 쿼리는 transparent 타겟과 비호환.
+ */
+export type TargetWhitespaceMode = "keep" | "transparent";
 
 /**
  * `buildQuery`의 출력. 사용자 입력을 grapheme 단위로 분해한 결과.
@@ -105,6 +123,12 @@ export interface Target {
     input: string;
     /** 소문자로 정규화된 입력 (literal 매칭에 사용) */
     normalizedInput: string;
+    /**
+     * 이 Target이 전처리된 공백 모드. hydrate된 Target의 모드 식별에 사용한다 —
+     * `PREPROCESS_VERSION`만으로는 구분 불가 (같은 버전 안에서 두 모드가 공존).
+     * `buildMatchRanges`의 끝좌표 산출과 preserve 쿼리 비호환 경고도 이 필드로 분기한다.
+     */
+    whitespace: TargetWhitespaceMode;
 
     // --- flat grapheme 데이터 ---
     /** grapheme 수 */
@@ -126,6 +150,8 @@ export interface Target {
     /**
      * UTF-16 문자 위치 → grapheme 인덱스 매핑.
      * multi-codepoint cluster 내의 모든 문자가 같은 grapheme 인덱스를 가리킨다.
+     * `whitespace: "transparent"` 모드에서 스킵된 공백 위치는 **다음에 방출된 grapheme**의
+     * 인덱스를 가리킨다 (뒤에 방출 grapheme이 없는 꼬리 공백은 마지막 grapheme으로 클램프).
      */
     graphemeIndexes: Uint16Array;
     /**
@@ -298,9 +324,18 @@ export type SearcherOptions<T = string> = {
     /**
      * 쿼리 공백 처리 정책. 기본값: `"ignore"`.
      * `"preserve"`로 지정하면 공백을 일반 atom으로 취급, `"split"`은 공백 boundary로 분리해 순서 무관 AND.
+     * **타겟 축** 공백 정책은 {@link SearcherOptions.targetWhitespace}가 담당한다 (별개 옵션).
      * @see {@link WhitespaceMode}
      */
     whitespace?: WhitespaceMode;
+    /**
+     * **타겟 축** 공백 처리 정책. 기본값: `"keep"`. `"transparent"`면 내부적으로
+     * `preprocessTarget(key(item), { whitespace: "transparent" })`로 전처리해 공백 낀
+     * near-exact 타겟이 연속 run으로 스코어링된다. 쿼리 축 정책 {@link SearcherOptions.whitespace}
+     * 와 혼동 주의. `target` supplier 공급 시(prebuilt hydrate)에는 적용되지 않는다.
+     * @see {@link TargetWhitespaceMode}
+     */
+    targetWhitespace?: TargetWhitespaceMode;
     /**
      * DP 가중치 / per-grapheme bonus. 객체이거나 target별로 다른 설정이 필요하면 함수 형태.
      * 함수 형태면 entry 생성 시(searcher 생성 / `add` / `replaceAll`) entry당 1회 평가되어 캐시된다
@@ -425,6 +460,11 @@ export type MultiFieldSearcherOptions<T> = {
     strict?: boolean;
     /** 쿼리 공백 처리 정책. 기본 `"ignore"`. @see {@link WhitespaceMode} */
     whitespace?: WhitespaceMode;
+    /**
+     * **타겟 축** 공백 처리 정책. 기본 `"keep"`. 각 필드의 `key` 기반 전처리에 적용된다
+     * (`field.target` supplier 공급 시에는 적용되지 않음). @see {@link SearcherOptions.targetWhitespace}
+     */
+    targetWhitespace?: TargetWhitespaceMode;
     /**
      * DP 가중치 / per-grapheme bonus. 모든 필드에 공통 적용된다.
      * 함수 형태면 entry 생성 시(searcher 생성 / `add` / `replaceAll`) 필드 target마다 1회 평가되어

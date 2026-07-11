@@ -83,6 +83,28 @@ results[0].fields[0].ranges(); // 필드별 하이라이트
 
 `literal: true` 경로(raw substring)는 whitespace 옵션을 무시한다.
 
+## `targetWhitespace` — 타겟 축 공백 투명화
+
+쿼리 축 `"ignore"`는 쿼리의 공백만 제거한다 — **타겟**의 공백은 여전히 grapheme 하나를
+차지해서, `"수당 지급 규정"`처럼 공백 낀 near-exact 타겟은 연속 매치가 공백마다 끊겨
+`"수당지급규정집"` 같은 공백 없는 경쟁 타겟에게 순위를 내준다. 인스턴스 옵션
+`targetWhitespace: "transparent"`(또는 `preprocessTarget(input, { whitespace: "transparent" })`)를
+주면 타겟의 공백(U+0020)이 grapheme을 소비하지 않아 공백을 가로지르는 매치가 연속 run으로
+스코어링되고, 공백 다음 글자는 단어 경계 보너스를 받는다:
+
+```ts
+const searcher = createSearcher(["수당 지급 규정", "수당지급규정집"], {
+    targetWhitespace: "transparent",
+});
+searcher.search("수당지급규정"); // "수당 지급 규정"이 1위 (keep에서는 밀린다)
+```
+
+기본값 `"keep"`은 기존 동작 그대로다. 하이라이트 좌표는 원문 기준을 유지한다 — 매치가
+공백을 가로지르면 내부 공백까지 한 range로 묶이고, 공백 앞에서 끝나면 공백은 포함되지 않는다.
+투명화 대상은 U+0020 하나뿐이며(탭/NBSP/`-`/`_`/`.`는 그대로 grapheme), 공백 포함
+`whitespace: "preserve"` 쿼리와는 조합할 수 없다 (타겟에 공백 grapheme이 없어 매치 불가 —
+dev 모드 경고). prebuilt `target` supplier를 쓰는 경우엔 관여하지 않는다.
+
 ## `strict` 모드
 
 기본(`strict: false`)은 모든 한글 grapheme을 관대하게 매칭해 IME 타이핑 여정을 수용한다
@@ -100,7 +122,7 @@ const searcher = createSearcher(items, { strict: true });
 옵션의 위치가 곧 의미다:
 
 - **`SearcherOptions`** (인스턴스 단위 정책, `createSearcher`에 전달): `key`, `target`, `fields`,
-  `strict`, `whitespace`, `scoring`, `score`, `tiebreakKey`.
+  `strict`, `whitespace`, `targetWhitespace`, `scoring`, `score`, `tiebreakKey`.
   한 번 만든 searcher는 동일 정책으로 모든 호출을 처리한다. 다른 정책이 필요하면 새 인스턴스.
 - **`SearchResultOptions`** (per-call, `search`/`scan`에 전달): `limit`, `literal`, `filter`.
 
@@ -222,7 +244,7 @@ searcher 없이 매칭 파이프라인을 직접 조합할 수도 있다:
 | 함수 | 설명 |
 | --- | --- |
 | `buildQuery(input, { whitespace? })` | 쿼리 문자열 → `Query` (grapheme·자모 분해) |
-| `preprocessTarget(input)` | 대상 문자열 → `Target` (flat typed array, 재사용·직렬화 가능) |
+| `preprocessTarget(input, { whitespace? })` | 대상 문자열 → `Target` (flat typed array, 재사용·직렬화 가능). `whitespace: "transparent"`는 공백 투명화 |
 | `matchBest(query, target, { scoring?, strict? })` | DP 기반 최적 매치. `MatchResult \| null` (score 포함) |
 | `matchLiteral(literal, target)` | raw substring 매치 (best occurrence + 간이 score) |
 | `matchFields(query, fields, { scoring?, strict? })` | 토큰 단위 cross-field AND. `FieldsMatchResult \| null` |

@@ -123,6 +123,11 @@ export function atomIdToChar(id: number): string {
 
 // boundary 판별용 상수 ID
 export const SPACE_ID = atomCharToId(" ");
+/**
+ * U+0020 code unit 값 — 타겟 transparent 모드가 투명화하는 유일한 문자.
+ * atom 축의 {@link SPACE_ID}와 짝: 어느 한쪽 정의만 바꾸면 쿼리/타겟 공백 대칭이 깨진다.
+ */
+export const SPACE_CHAR_CODE = 0x20;
 export const UNDERSCORE_ID = atomCharToId("_");
 export const DASH_ID = atomCharToId("-");
 export const DOT_ID = atomCharToId(".");

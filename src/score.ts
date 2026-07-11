@@ -1,3 +1,4 @@
+import { SPACE_CHAR_CODE } from "./internal/atomRegistry";
 import type { MatchResult, ScoringConfig, Target } from "./types";
 
 /**
@@ -108,6 +109,10 @@ export function resolveScoring(config: ScoringConfig | undefined, _target: Targe
  * 반환 배열의 길이는 `target.graphemeCount`와 같고,
  * 범위에 속하지 않는 grapheme의 값은 0이다.
  *
+ * `whitespace: "transparent"` 타겟에서는 range 양 끝의 공백(U+0020)을 수축시킨 뒤
+ * grapheme으로 매핑한다 — 공백 위치가 **다음** grapheme으로 매핑되므로 수축 없이는
+ * 공백에 걸친 range의 bonus가 다음 단어 첫 grapheme으로 번진다. 수축 결과가 빈 range면 skip.
+ *
  * @param target - `preprocessTarget`으로 생성한 타겟
  * @param ranges - 각 원소의 start/end는 원문 UTF-16 offset (end exclusive), bonus는 가산할 점수
  * @returns `graphemeBonus`로 바로 사용 가능한 number 배열
@@ -126,10 +131,29 @@ export function createGraphemeBonuses(
 ): number[] {
     const bonuses = new Array<number>(target.graphemeCount).fill(0);
     const gIdx = target.graphemeIndexes;
-    for (const { start, end, bonus } of ranges) {
-        if (start >= end) continue;
+    const charIdx = target.charIndexes;
+    const transparent = target.whitespace === "transparent";
+    const normalized = target.normalizedInput;
+    // transparent 타겟에서 위치 p가 **스킵된** 공백인지 판별. U+0020이라도 방출된
+    // cluster의 base일 수 있으므로(공백+결합문자 cluster) 문자만으로는 부족하다 —
+    // 스킵된 공백은 다음/마지막 grapheme으로 매핑되어 그 grapheme의 시작 위치와
+    // 불일치하고, cluster base는 자기 grapheme의 시작 위치와 정확히 일치한다.
+    const isSkippedSpace = (p: number): boolean =>
+        normalized.charCodeAt(p) === SPACE_CHAR_CODE && charIdx[gIdx[p]] !== p;
+    for (const range of ranges) {
+        const { bonus } = range;
+        let start = range.start;
+        let last = Math.min(range.end - 1, gIdx.length - 1); // inclusive 끝
+        if (transparent) {
+            // 스킵된 공백은 grapheme을 소비하지 않고 다음 grapheme으로 매핑되므로, 공백에
+            // 걸친 끝을 그대로 매핑하면 bonus가 다음 단어 첫 grapheme으로 번진다. 양 끝을
+            // 스킵된 공백이 아닌 위치까지 수축시킨다. keep 모드 동작은 불변.
+            while (start <= last && isSkippedSpace(start)) start++;
+            while (last >= start && isSkippedSpace(last)) last--;
+        }
+        if (start > last) continue;
         const startGi = gIdx[start];
-        const endGi = gIdx[Math.min(end - 1, gIdx.length - 1)];
+        const endGi = gIdx[last];
         if (startGi == null || endGi == null) continue;
         for (let gi = startGi; gi <= endGi; gi++) {
             bonuses[gi] += bonus;

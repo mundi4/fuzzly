@@ -38,15 +38,16 @@ LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적
 
 ### Target Flat Layout
 
-`preprocessTarget(input)` → `Target`. flat typed array 레이아웃:
+`preprocessTarget(input, opts?: { whitespace? })` → `Target`. flat typed array 레이아웃:
 
 ```
+whitespace: "keep" | "transparent" — 이 Target이 전처리된 공백 모드 (자기서술, 직렬화 가능)
 atomsFlat: Uint16Array     — 전체 atom ID 연결
 atomStarts: Uint32Array    — grapheme i의 시작 offset
 atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼). 255 초과 시 RangeError (silent wrap 방지)
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음
 boundaryFlags: Uint8Array  — 0/1
-charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError
+charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError (공백 포함 원문 길이 기준)
 ```
 
 grapheme i의 atom j 접근: `atomsFlat[atomStarts[i] + j]`
@@ -75,6 +76,10 @@ atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 
 fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. 소비자는 이 값을 **캐시 행마다
 적지 말고** 스토어 단위로 한 번만 기록(예: IDB meta 레코드 하나)해두고, 로드 시 불일치하면
 저장된 Target 전체를 재전처리한다.
+
+이력: v3 — `Target.whitespace` 필드 추가 + transparent 모드 도입. v2 — foldCase 전환.
+같은 버전 안에서 두 공백 모드(`keep`/`transparent`)가 공존하므로 **버전만으로 모드 구분 불가** —
+hydrate된 Target의 모드 식별(소비자의 재인덱싱 판단)은 `Target.whitespace` 필드로 한다.
 
 ### match.ts
 
@@ -140,6 +145,22 @@ literal은 substring이라 문자열 확장에 단조 → strict와 무관하게
 
 `matchLiteral` 및 `SearchOptions.literal: true` 경로는 whitespace 옵션을 **무시**한다 (raw substring 경로).
 
+**타겟 축** (`preprocessTarget`의 `whitespace` 옵션, searcher는 `targetWhitespace`):
+| 값 | 동작 |
+|---|---|
+| `"keep"` (**기본값**) | 공백을 독립 grapheme으로 방출 (기존 동작). 공백 양옆 매치는 연속 run으로 이어지지 않는다 |
+| `"transparent"` | **U+0020만** grapheme으로 방출하지 않음 — 쿼리 `"ignore"`가 제거하는 것과 정확히 대칭. 공백 낀 near-exact 매치가 연속 run으로 스코어링됨 |
+
+transparent 시맨틱: 스킵된 공백 다음 grapheme은 boundary=1. 공백의 UTF-16 위치는
+`graphemeIndexes`에서 **다음에 방출된 grapheme**으로 매핑 (꼬리 공백은 마지막 grapheme으로 클램프).
+`graphemeCount`가 공백을 세지 않으므로 `targetLengthPenalty × T`에서 공백이 빠진다 (의도된 시맨틱).
+탭/개행/NBSP/`_`/`-`/`.`는 투명화하지 않는다 (쿼리에서 제거되지 않으므로 투명화하면 비대칭).
+`buildMatchRanges`는 transparent 타겟에서 range 끝 grapheme의 cluster 끝을 `graphemeIndexes` 스캔으로
+구해 뒤 공백을 하이라이트에 포함하지 않는다 (공백을 가로지르는 연속 run의 내부 공백은 포함 — 의도된 동작).
+공백 포함 `whitespace: "preserve"` 쿼리는 transparent 타겟에 구조적으로 매치 불가 (dev 모드 warn-once).
+매칭 엔진(match.ts DP)은 변경 없음 — transparent의 효과는 전적으로 grapheme 시퀀스가 공백-프리가
+되는 것에서 나온다.
+
 ### Scoring (5축 가산 합)
 
 `matchBest` DP 스코어는 모든 축의 단순 가산 합. 배율·후보정·discrete jump 없음.
@@ -183,7 +204,7 @@ substring이며, score 는 필드별 literal 간이 스코어에 부호 보존 w
 
 ```
 buildQuery(input, opts?: { whitespace? }) → Query
-preprocessTarget(input) → Target
+preprocessTarget(input, opts?: { whitespace? }) → Target ("keep" | "transparent", 기본 "keep")
 matchBest(query, target, opts?: { scoring?, strict? }) → MatchResult | null (score 포함)
   (positional matchBest(query, target, scoring?, strict?) 는 deprecated 오버로드)
 matchLiteral(literal, target, scoring?) → MatchResult | null (best occurrence + 간이 score)
@@ -200,7 +221,7 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 옵션 분리 (옵션 위치 = 의미):
 
-- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `scoring`, `score`, `tiebreakKey`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스.
+- `SearcherOptions` (인스턴스 단위 정책): `key`, `strict`, `whitespace`, `targetWhitespace`, `scoring`, `score`, `tiebreakKey`. 한 번 만든 searcher는 동일 정책으로 모든 search 호출. 다른 정책 필요 시 새 인스턴스. `targetWhitespace`는 **타겟 축** 공백 정책으로 key 기반 전처리에만 적용 (`target`/`field.target` supplier 공급 시 관여 안 함 — prebuilt 존중).
 - `SearchResultOptions<T>` (per-call): `limit`, `literal`, `filter`. search/scan 단위로만 의미 있는 옵션.
 - `SearchOptions` 는 `SearchResultOptions` 의 alias (deprecated).
 
@@ -216,7 +237,8 @@ createSearcher(items, opts: MultiFieldSearcherOptions) → MultiFieldSearcher (�
 
 주요 타입:
 
-- `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`)
+- `WhitespaceMode` = `"preserve" | "ignore" | "split"` (기본 `"ignore"`) — 쿼리 축
+- `TargetWhitespaceMode` = `"keep" | "transparent"` (기본 `"keep"`) — 타겟 축 (`preprocessTarget` 옵션 / `SearcherOptions.targetWhitespace`)
 - `SearcherOptions.strict?: boolean` (기본 `false`)
 - `ScanCursor<R>` — `scan()`이 반환하는 pull 기반 커서 (incremental/cancellable 스캔 + 정확한 total)
 - `SearchResult.score: number` — **required** (양쪽 경로 모두 항상 세팅)

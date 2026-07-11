@@ -19,6 +19,7 @@ import type {
     SearchResult,
     SearchResultOptions,
     Target,
+    TargetWhitespaceMode,
     WhitespaceMode,
 } from "./types";
 
@@ -81,6 +82,7 @@ const SEARCHER_ONLY_KEYS = new Set([
     "fields",
     "strict",
     "whitespace",
+    "targetWhitespace",
     "scoring",
     "score",
     "tiebreakKey",
@@ -421,7 +423,10 @@ function createSingleFieldSearcher<T>(items: readonly T[], options: SearcherOpti
             throw new TypeError("createSearcher requires options.key when items are not strings");
         });
 
-    const toTarget: (item: T) => Target = options.target ?? ((item) => preprocessTarget(keyFn(item)));
+    // targetWhitespace 는 key 기반 전처리에만 적용 — prebuilt `target` supplier 는 존중.
+    // 옵션 객체는 호이스팅해 아이템당 재할당을 피한다 (preprocessTarget 은 읽기만 한다).
+    const targetOpts: { whitespace: TargetWhitespaceMode } = { whitespace: options.targetWhitespace ?? "keep" };
+    const toTarget: (item: T) => Target = options.target ?? ((item) => preprocessTarget(keyFn(item), targetOpts));
 
     const strict = options.strict ?? false;
     const whitespace = options.whitespace ?? "ignore";
@@ -478,11 +483,13 @@ function createMultiFieldSearcher<T>(
     }
 
     // 필드별 target resolver 확정 + weight 검증 (matchFields 와 동일 규칙, 생성 시점 fail-fast).
+    // targetWhitespace 는 key 기반 전처리에만 적용 — prebuilt `field.target` supplier 는 존중.
+    const targetOpts: { whitespace: TargetWhitespaceMode } = { whitespace: options.targetWhitespace ?? "keep" };
     const toTargets: ((item: T) => Target)[] = fields.map((f) => {
         const tgt = f.target;
         if (tgt) return tgt;
         const kf = f.key;
-        if (kf) return (item: T) => preprocessTarget(kf(item));
+        if (kf) return (item: T) => preprocessTarget(kf(item), targetOpts);
         throw new TypeError("createSearcher: each field requires 'key' or 'target'");
     });
     for (const f of fields) {

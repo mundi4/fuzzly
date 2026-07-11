@@ -29,6 +29,7 @@ export type {
     SearchResult,
     SearchResultOptions,
     Target,
+    TargetWhitespaceMode,
     TextSegment,
     WhitespaceMode,
 } from "./types";
