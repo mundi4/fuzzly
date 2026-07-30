@@ -16,6 +16,16 @@ export default defineConfig([
         dts: true,
         sourcemap: true,
     },
+    // layout entry: esm + cjs만. iife 제외 — globalName 이 "fuzzly" 하나뿐이라
+    // layout.global.js 를 index.global.js 와 같이 로드하면 전역을 덮어쓴다.
+    {
+        entry: {
+            layout: "src/layout.ts",
+        },
+        format: ["esm", "cjs"],
+        dts: true,
+        sourcemap: true,
+    },
     // react entry: esm + cjs만. iife 제외 — react를 번들에 인라인하지 않기 위함 (issue #29).
     {
         entry: {

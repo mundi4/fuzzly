@@ -237,6 +237,52 @@ function Palette() {
 IME 중간상태를 기본으로 수용). composition caret 표시 등 UI 신호용이다.
 React는 optional peer dependency — `fuzzly/react`를 import하지 않으면 필요 없다.
 
+## `fuzzly/layout` — 한/영 오타 복원
+
+한영키를 안 누르고 `gksrmf`를 쳤을 때 `한글`을 되돌려주는 순수함수. 두벌식 + QWERTY 전용.
+
+```ts
+import { swapLayout } from "fuzzly/layout";
+
+swapLayout("gksrmf"); // "한글"   — 영타 → 한글 (두벌식 오토마타로 조합)
+swapLayout("ㅗ디ㅣㅐ"); // "hello"  — 한글 → 영타
+swapLayout("Ekfrl"); // "딸기"   — shift+e = ㄸ
+swapLayout("EKFRL", true); // "달기"   — CapsLock 켜짐을 알려주면 케이스를 반전해 해석
+```
+
+`capsLock`을 생략하면 케이스 패턴에서 추론한다. 두벌식에서 shift가 **다른** 자모를 내는 키는
+`q w e r t o p` 7개뿐이므로, 그 밖의 대문자가 있으면 CapsLock이 켜진 것이고 그 밖의 소문자가
+있으면 꺼진 것이다. 두 해석이 모두 살아남는 건 입력이 그 7글자로만 이루어진 경우(`e`, `to`)뿐이다.
+브라우저에서는 keydown의 `getModifierState("CapsLock")`으로 실제 상태를 넘길 수 있다.
+
+NFD로 분해된 한글(macOS 파일명 등)도 인식한다.
+
+**혼합 스크립트는 복원 대상이 아니다.** 이 함수는 기계적으로 모든 구간을 뒤집으므로
+`swapLayout("제목 gksrmf")`는 `"wpahr 한글"`이 되어 이미 올바른 `제목`까지 망가진다.
+한영키를 깜빡하면 쿼리 **전체**가 잘못되므로 실사용에서 손해는 아니지만, 한글과 라틴이
+섞인 입력에는 적용하지 않는 편이 낫다 (아래 예제의 `monoScript` 게이트).
+
+**검색 동작은 이 함수를 호출하지 않는다.** 언제 적용할지, 결과를 어떻게 보여줄지는 제품 결정이다
+— 두 해석을 하나의 순위로 합치려면 코퍼스마다 달라지는 점수 상수가 필요해지는데, 그건
+라이브러리가 가질 수 없는 지식이다 (`design_notes.md` Case 2). 대신 소비자가 조합한다.
+아래는 "결과가 없을 때만 제안"하는 패턴 — 결과 집합을 건드리지 않으므로 monotonic narrowing
+계약과 무관하다:
+
+```ts
+const HANGUL = /[ᄀ-ᇿㄱ-ㅣ가-힣]/;
+const LATIN = /[a-z]/i;
+
+const opts = { target: (it: Item) => it.cached }; // Target 공유 → 전처리 중복 없음
+const main = createSearcher(items, opts);
+const alt = createSearcher(items, opts); // 독립 세션 → main의 세션을 오염시키지 않는다
+
+const results = main.search(text);
+// 한글·라틴이 섞였으면 어느 구간이 잘못된 건지 알 수 없다 — 제안하지 않는다
+const monoScript = !(HANGUL.test(text) && LATIN.test(text));
+const swapped = monoScript ? swapLayout(text, capsLock) : text;
+const suggestion = results.length === 0 && swapped !== text ? alt.search(swapped) : [];
+```
+
 ## Low-level API
 
 searcher 없이 매칭 파이프라인을 직접 조합할 수도 있다:

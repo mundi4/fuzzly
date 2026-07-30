@@ -190,6 +190,171 @@ searcher.search("안녕");                              // 토글 해제, fuzzy 
 - (2) / (3) 허용, 어느 쪽을 구현할지 추후 결정
 - 내 권장은 "일단 안 함, 수요가 생기면 (3)부터"
 
+### 자동인식 설계 재검토 (2026-07-30)
+
+위 Case 2가 던진 질문은 "swap을 할 것이냐"였다. 이 절은 그 다음 질문 — **"언제 swap인지
+기계가 판단할 수 있느냐"** — 를 끝까지 따라간 기록이다. **구현하지 않기로 결론냈고**, 그
+이유는 맨 아래 있다. 전제: 두벌식 + QWERTY만 고려.
+
+#### 원칙: 인식은 필터가 아니라 랭킹 문제다
+
+(1)이 거부된 이유(disjoint 점프)가 자동인식 전체를 지배한다. 어떤 판정 신호를 쓰든
+**신호는 조합 도중 진동한다**:
+
+```
+g:0.00(ㅎ)  gk:1.00(하)  gks:1.00(한)  gksr:0.75(한ㄱ)  gksrm:1.00(한그)  gksrmf:1.00(한글)
+```
+
+`gksr`(= `한ㄱ`, 조합 중)에서 신뢰도가 떨어진다. 이걸 후보 집합 게이트로 쓰면 monotonic
+narrowing이 깨진다. → **후보 집합은 항상 `fuzzy(q) ∪ fuzzy(swap(q))`(Case 2-(2)에서 단조 증명됨),
+신뢰도는 점수에만 반영한다.** 그러면 신호가 매 키마다 요동쳐도 계약은 구조적으로 안 깨진다.
+
+#### swap 함수와 fuzzly의 궁합
+
+en→ko를 단순 문자 치환이 아니라 **두벌식 오토마타 리플레이**로 구현하면, 출력이
+`ㅎ → 하 → 한 → 한ㄱ → 한그 → 한글` — fuzzly가 이미 1급으로 지원하는 IME journey다.
+이 시퀀스는 flat atom 스트림 기준 append-only이고(도깨비불 `한`+`ㅏ`→`하나`도 flat으로는
+`ㅎㅏㄴ`→`ㅎㅏㄴㅏ`), 세션 재사용 판정이 `Query.atoms` 연결 문자열의 prefix 비교
+(`createSearcher.ts`의 `c.startsWith(p)`)이므로 **swap 브랜치도 기존 세션 기계를 그대로 탄다**.
+
+ko→en은 자모 분해 후 역매핑(겹모음 `ㅘ`→`hk`, 겹받침 `ㄳ`→`rt` 분해). 33키 + shift 7키
+양방향 테이블 하나면 되고, `decomposeToAtoms`/`atomIdToChar`가 이미 있다.
+
+**제약**: `buildQuery`가 `foldCase`를 때리므로 swap은 **foldCase 앞단(raw input)** 에서 해야 한다.
+
+#### 반드시 토큰별로 swap해야 한다 (전체 문자열 X)
+
+이게 이 설계의 핵심이고, 틀리면 세션 재사용이 unsound해진다.
+
+- **의미론**: 토큰별이면 `∩_t (native_t ∪ alt_t)` — 토큰 AND는 유지되고 **브랜치 OR이 토큰
+  안에 갇힌다**. 전체 문자열 swap이면 OR이 토큰 AND 바깥으로 나와서, AND를 가정한 기존
+  스냅샷 prefix 체크가 깨진다.
+- **재사용 체크가 공짜**: swap이 atom-prefix 보존이므로 `native_t`가 `native_t'`의 atom-prefix면
+  `alt_t`도 `alt_t'`의 atom-prefix다. → **native 토큰만 검사해도 alt까지 커버**된다.
+  split의 atom-prefix dedup(`"a ab"` → `["ab"]`)도 같은 이유로 그대로 안전.
+- **혼합 스크립트**: `"제목 gksrmf"`를 통째로 swap하면 `"wpahr 한글"` — 어느 해석도 아닌
+  쓰레기. 토큰별이면 각 토큰이 독립적으로 `native ∪ alt`.
+
+단, **`capsLock`은 재사용 호환 키에 명시적으로 넣어야 한다.** capsLock이 뒤집히면 native
+토큰은 그대로인데 alt만 바뀌므로 prefix 체크가 못 잡는다 (`literal` 플래그와 같은 자리).
+그리고 alt-dead latch(아래)는 **글로벌이 아니라 스냅샷별**이어야 한다 — 백스페이스가 조상
+스냅샷을 복원하므로 alt가 되살아날 수 있다.
+
+#### CapsLock 애매성: 길이가 아니라 키 집합으로 판정
+
+두벌식에서 shift가 다른 자모를 내는 건 `q w e r t o p` 7개뿐(ㅂㅈㄷㄱㅅㅐㅔ ↔ ㅃㅉㄸㄲㅆㅒㅖ).
+나머지 19키는 대소문자 무관 — `GKSRMF`도 그대로 `한글`이다.
+
+CapsLock은 전역 모드라 가설이 딱 둘이다: **H1**(caps off, 보이는 대문자 = 실제 shift = 쌍자모),
+**H2**(caps on, 케이스 전부 반전). 핵심은 — **shift를 누를 *이유*가 있는 키는 `qwertop`뿐**이라는 것:
+
+| | 반박 조건 |
+| --- | --- |
+| **H1** (caps off) | `qwertop` 밖의 **대문자**가 있음 (shift 누를 이유 없는 자리에 눌렀다 ⇒ caps가 켜진 것) |
+| **H2** (caps on)  | `qwertop` 밖의 **소문자**가 있음 (caps 켜졌는데 그 자리에 shift 눌렀다 ⇒ caps가 꺼진 것) |
+
+```
+e / we / to / pot   H1 살아있음  H2 살아있음   ← 진짜 애매
+ek / tk / Ek        H1 살아있음  H2 반박       → 다 / 사 / 따
+Ekfrl               H1 살아있음  H2 반박       → 딸기   (혼합 케이스인데 확정된다)
+gksrmf / dkssud     H1 살아있음  H2 반박       → 한글 / 안녕
+GKSRMF / EKFRL      H1 반박      H2 살아있음   → 한글 / 달기
+GksRmf              H1 반박      H2 반박       → 정상 입력 아님, 신뢰도 바닥
+```
+
+**남는 애매함 = 쿼리가 `qwertop` 7글자로만 이루어진 경우뿐** — 사실상 1~2글자.
+"전부 소문자면 caps off"라는 길이 기반 논증은 **1글자에서 무너진다** (caps 켜진 채 `Shift+E`
+한 번 = 소문자 `e` = ㄸ 의도). 키 집합 규칙은 길이와 무관하게 성립한다.
+
+이 반박 규칙은 **hard gate가 아니라 prior로** 써야 한다 — 타이핑 중 shift가 한 키 늘어지는
+일은 실제로 일어나고, 위 "필터 아닌 랭킹" 원칙도 그대로 적용된다.
+
+브라우저에서는 `KeyboardEvent.getModifierState("CapsLock")`으로 **실제 상태를 읽을 수 있다**.
+`useFuzzlyInput`이 keydown을 보므로 사실상 항상 알 수 있고, 그러면 이 추론 전체가 불필요해진다.
+API 모양은 per-call `capsLock?: boolean` (`true | false | undefined` 삼항, undefined = 추론 폴백).
+
+#### 신호: 조합 수율 (composition yield)
+
+swap 결과 자모 중 완성형 음절에 흡수된 비율. 한국어는 CV(C)가 강제라 항상 1.0이지만,
+영어 철자를 두벌식에 사상하면 자음/모음 배치가 무관해져 고아 자모가 쏟아진다.
+**꼬리 고아 자모 1개를 제외**해야 조합 중 진동이 사라진다:
+
+```
+gksrmf   g:—  gk:1.00 gks:1.00 gksr:1.00 gksrm:1.00 gksrmf:1.00   → 한글
+rjator   r:—  rj:1.00 rja:1.00 rjat:1.00 rjato:1.00 rjator:1.00   → 검색
+search   s:—  se:0.00 sea:0.00 sear:0.00 searc:0.00 search:0.33   → ㄴㄷㅁㄱ초
+settings s:—  se:0.00 set:0.00 sett:0.00 setti:0.40 ...     :0.29 → ㄴㄷㅅ샤ㅜㅎㄴ
+```
+
+측정(한글 의도 40개 / 영어 83개): 한글은 전원 1.00(round-trip이므로 구조적 보장),
+영어는 평균 0.47. 임계값 1.0에서 영어 오탐 10/83(12%) — `world the and cut for with query
+queue theme syzygy`. **오탐이 전부 짧은 단어에 몰린다. capsLock 추론이 무너지는 구간과 정확히 같다.**
+→ 두 prior 모두 짧은 쿼리에서 무력하다. 그 구간은 어차피 후보가 넘쳐 정확도가 무의미하므로
+랭킹에 맡기는 게 맞다.
+
+#### L2(코퍼스 증거)는 기각
+
+"두 브랜치의 top score를 비교하면 어떤 언어학적 휴리스틱보다 정확하다"가 처음 결론이었으나,
+**`scan` 커서와 상충한다**. 브랜치 비교는 스캔이 끝나야 알 수 있는데 커서는 부분 결과를
+증분으로 내보내므로, 뒤늦게 페널티가 바뀌면 이미 그려진 순위가 뒤집힌다. 직전 스캔 결과를
+재사용하는 변형은 같은 쿼리가 히스토리에 따라 다른 결과를 내서 결정성이 깨진다.
+→ **L1 prior(수율 + capsLock)만 쓴다.**
+
+#### 스코어링 전략 (가산만 — 5축 철학 준수)
+
+```
+altScore = rawScore − (swapBase + swapYieldPenalty × (1 − yield))
+```
+
+- `yield`는 쿼리당 1회 계산, target 무관 → 캐시가 자연스럽다
+- fuzzly 점수는 음수가 될 수 있지만 **가산** 페널티라 멀티필드 weight 같은 부호 보존 처리 불필요
+- 같은 아이템이 양쪽에 걸리면 `max(native, alt)`. 동점이면 native 승(결정적), 하이라이트도 이긴 쪽
+- 페널티가 상수이므로 긴 쿼리일수록 상대적으로 작아진다 = 증거가 많을수록 alt를 신뢰. 의도된 동작
+- 튜닝 목표: `완벽한 alt 매치 > 흩어진 native 매치` 이면서 `괜찮은 native 매치 > 완벽한 alt 매치`.
+  `swapBase`는 `positionZero + boundary` 보너스 합 근처에서 출발
+- capsLock 애매 구간(`qwertop`-only)에서 alt를 둘 다 만들면 브랜치가 3개가 된다. **H1 하나만** 쓴다
+
+#### 사이드이펙트 목록
+
+| 항목 | 대응 |
+| --- | --- |
+| 번들 크기 (오토마타+테이블 ~1.5–2KB) | `fuzzly/layout` 서브엔트리 + DI (`SearcherOptions.layoutSwap`) 로 tree-shake |
+| alt-dead latch | 글로벌 아님 — **스냅샷별**. 백스페이스로 조상 복원 시 alt가 되살아난다 |
+| `scan`의 `total` | 아이템 단위 dedup 후 카운트 |
+| 하이라이트 설명 | ranges는 target 좌표계라 무해. 단 `MatchResult`에 이긴 해석 + 해석된 쿼리 노출 필요 |
+| 멀티필드 | 브랜치 OR은 cross-field AND **안쪽**(토큰 레벨)에 |
+| strict | alt도 동일 가드(토큰 완전 동일일 때만 재사용). 추가 예외 불필요 |
+| `literal: true` | swap 적용 안 함 (whitespace도 무시하는 raw substring 경로와 동일 취급) |
+| dev silent-ignore guard | `capsLock`을 per-call 키 목록에 추가 |
+| 순위 요동 | 꼬리 고아 자모 1개 제외로 해소 (위 실측) |
+| `PREPROCESS_VERSION` | **bump 불필요** — Target 레이아웃/atom 인코딩 무변경. 쿼리 축만 건드린다 |
+
+#### 결론: 라이브러리 경계는 `swapLayout`까지다
+
+union 랭킹은 **구현하지 않았다.** 이유는 비용이 아니라 경계다.
+
+위 스코어링 전략에는 `swapBase`라는 튜닝 상수가 있고, 이 값은 코퍼스(항목 길이 분포, 필드 수,
+점수 스케일)에 의존한다. 내 코퍼스에서 맞춘 값이 남의 코퍼스에서 안 맞는다. **실사용 데이터가
+있어야 정해지는 상수가 필요하다는 건, 그 기능이 라이브러리에 속하지 않는다는 신호다.**
+
+그리고 그 상수가 필요했던 유일한 이유는 **두 해석을 하나의 순위로 합치려 했기 때문**이다.
+합치려면 비교 불가능한 두 점수 스케일을 억지로 통약해야 한다. 안 합치면 상수가 없다.
+"as-typed 해석과 swap 해석 중 무엇을 위에 놓을 것인가"는 매칭 문제가 아니라 제품 결정이고,
+그 판단에 필요한 지식(사용자층, 코퍼스 언어 분포, 오탐의 비용)은 라이브러리에 없다.
+
+→ 경계를 다시 그으면 라이브러리 몫은 **`swapLayout(input, capsLock?)` 하나**다
+(`src/layout.ts`, `fuzzly/layout`). 순수함수, 튜닝 노브 0, 임계값 0, 입력만으로 완전 결정,
+round-trip property로 검증된다. 합성은 소비자가 한다 — Target을 공유하는 두 번째 searcher를
+만들면 세션 오염도 전처리 중복도 없다 (README 참고).
+
+`compositionYield`(조합 수율)는 **내보내지 않았다.** always-on union의 신뢰도 가중치로만
+필요했던 것이고, "native 검색이 0건인데 swap 검색은 히트"라는 코퍼스 증거가 이미 공짜로
+같은 일을 한다. 위 수율 분석은 판단 근거로만 남긴다.
+
+다시 손댈 일이 생기면: 소비자 쪽 "제안 표면"(결과 집합은 건드리지 않고 *"혹시 `한글`?"* 만
+띄우기)이 단조성 계약을 전혀 건드리지 않으면서 가치의 대부분을 가져간다. 그걸로 실사용
+오탐률이 모인 **다음에야** union 랭킹을 얘기할 수 있다.
+
 ---
 
 ## Case 3: `tailSpillover` 옵션
