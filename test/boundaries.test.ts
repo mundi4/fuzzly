@@ -376,6 +376,12 @@ describe("graphemeCount boundary for typed arrays", () => {
         expect(target.boundaryFlags[5]).toBe(0);
     });
 
+    it("visible ' / ' join keeps boundaries in transparent mode", () => {
+        // "ab / cd" → 방출 grapheme: a b / c d (공백 2개 스킵)
+        const target = preprocessTarget("ab / cd", { whitespace: "transparent" });
+        expect(Array.from(target.boundaryFlags)).toEqual([1, 0, 1, 1, 0]);
+    });
+
     it("'/'-joined target scores like a dash-joined one", () => {
         const q = buildQuery("wht");
         const slash = matchBest(q, preprocessTarget("boogerworks/Whitespace"));

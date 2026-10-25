@@ -47,7 +47,7 @@ atomStarts: Uint32Array    — grapheme i의 시작 offset
 atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼). 255 초과 시 RangeError (silent wrap 방지)
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음
 boundaryFlags: Uint8Array  — 0/1. 첫 grapheme + 구분자(공백 _ - . / \ :) 바로 다음 grapheme
-                             (atomRegistry.isBoundarySeparatorId). `#`/`@`/`>` 같은 sigil은 소비자 몫이라 제외
+                             (atomRegistry.isBoundarySeparatorLUT). `#`/`@`/`>` 같은 sigil은 소비자 몫이라 제외
 charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError (공백 포함 원문 길이 기준)
 ```
 

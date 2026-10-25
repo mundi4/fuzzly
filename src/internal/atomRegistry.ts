@@ -128,26 +128,13 @@ export const SPACE_ID = atomCharToId(" ");
  * atom 축의 {@link SPACE_ID}와 짝: 어느 한쪽 정의만 바꾸면 쿼리/타겟 공백 대칭이 깨진다.
  */
 export const SPACE_CHAR_CODE = 0x20;
-export const UNDERSCORE_ID = atomCharToId("_");
-export const DASH_ID = atomCharToId("-");
-export const DOT_ID = atomCharToId(".");
-export const SLASH_ID = atomCharToId("/");
-export const BACKSLASH_ID = atomCharToId("\\");
-export const COLON_ID = atomCharToId(":");
 
 /**
- * 단어 경계 구분자 atom 여부 — 이 atom 단독 grapheme 바로 다음 grapheme이 boundary가 된다.
- * 공백 `_` `-` `.` `/` `\` `:`. 집합을 바꾸면 Target.boundaryFlags 산출이 바뀌므로
- * `PREPROCESS_VERSION`을 bump할 것.
+ * isBoundarySeparatorLUT[id] === 1 이면 단어 경계 구분자 atom — 이 atom 단독 grapheme 바로 다음
+ * grapheme이 boundary가 된다. 공백 `_` `-` `.` `/` `\` `:`. 집합을 바꾸면 Target.boundaryFlags
+ * 산출이 바뀌므로 `PREPROCESS_VERSION`을 bump할 것.
  */
-export function isBoundarySeparatorId(id: number): boolean {
-    return (
-        id === SPACE_ID ||
-        id === UNDERSCORE_ID ||
-        id === DASH_ID ||
-        id === DOT_ID ||
-        id === SLASH_ID ||
-        id === BACKSLASH_ID ||
-        id === COLON_ID
-    );
+export const isBoundarySeparatorLUT = new Uint8Array(256);
+for (const ch of " _-./\\:") {
+    isBoundarySeparatorLUT[atomCharToId(ch)] = 1;
 }

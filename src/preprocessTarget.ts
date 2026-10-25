@@ -1,4 +1,4 @@
-import { isBoundarySeparatorId, SPACE_CHAR_CODE, SPACE_ID } from "./internal/atomRegistry";
+import { isBoundarySeparatorLUT, SPACE_CHAR_CODE, SPACE_ID } from "./internal/atomRegistry";
 import { eachGrapheme } from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms, foldCase } from "./internal/utils";
 import type { Atoms, Target, TargetWhitespaceMode } from "./types";
@@ -148,7 +148,7 @@ export function preprocessTarget(input: string, opts?: { whitespace?: TargetWhit
         vowelIdxs[i] = vowelIndex;
         tailIdxs[i] = tailIndex;
 
-        // boundary 판별: 첫 grapheme이거나 직전 *방출* grapheme이 구분자(isBoundarySeparatorId).
+        // boundary 판별: 첫 grapheme이거나 직전 *방출* grapheme이 구분자(isBoundarySeparatorLUT).
         // transparent 모드에선 공백이 방출되지 않으므로 "직전 원문 문자가 U+0020"으로
         // 스킵된 공백 경계를 판별한다 — 방출된 cluster는 U+0020으로 끝날 수 없어
         // (공백은 앞 cluster에 붙지 않음) 이 문자는 항상 스킵된 공백이다.
@@ -158,7 +158,7 @@ export function preprocessTarget(input: string, opts?: { whitespace?: TargetWhit
             boundaryFlags[i] = 1;
         } else {
             const prev = tmpAtomArrays[i - 1];
-            if (prev.length === 1 && isBoundarySeparatorId(prev[0])) {
+            if (prev.length === 1 && isBoundarySeparatorLUT[prev[0]] === 1) {
                 boundaryFlags[i] = 1;
             }
         }

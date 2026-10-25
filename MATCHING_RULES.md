@@ -187,7 +187,8 @@ ASCII, 이모지 등 non-Hangul은 기본적으로 exact atom match다.
 
 ### 4.3 boundary
 
-단어 경계(공백, 언더스코어, 하이픈, 점 뒤)에서 매치된 grapheme 각각에 고정 보너스를 더한다.
+단어 경계(target 첫 grapheme, 그리고 공백 `_` `-` `.` `/` `\` `:` 뒤)에서 매치된 grapheme 각각에
+고정 보너스를 더한다. `#` `@` `>` 같은 sigil은 구분자가 아니다 (스코프 접두사는 소비자 몫).
 
 ### 4.4 consecutive (제곱)
 
