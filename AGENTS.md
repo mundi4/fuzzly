@@ -34,7 +34,7 @@ LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적
 
 **충돌 (실 사용에선 미발생)**: 제어문자 U+0000-U+001F는 ID 0-31로 자모 영역과, U+007F/U+0080은 fixed ASCII와 충돌. command palette 텍스트엔 등장하지 않으므로 무시.
 
-**필드 concat 금지**: 멀티필드를 흉내내려 여러 필드를 구분자로 이어 붙이지 말 것. 개행 `\n`(U+000A)은 code unit 10 → atom ID 10 = `ㅅ`과 충돌하므로 `"a\nb"`가 `ㅅ`을 매치하는 등 오염이 생긴다. 여러 필드는 `matchFields`/멀티필드 searcher로 처리한다.
+**숨은 구분자 concat 금지**: 멀티필드를 흉내내려 여러 필드를 화면에 안 보이는 구분자로 이어 붙이지 말 것. 개행 `\n`(U+000A)은 code unit 10 → atom ID 10 = `ㅅ`과 충돌하므로 `"a\nb"`가 `ㅅ`을 매치하는 등 오염이 생긴다. 필드별 가중치·귀속이 필요하면 `matchFields`/멀티필드 searcher로 처리한다. 화면에 그대로 보이는 한 줄(`"project / title"`)을 타겟으로 쓰는 것은 허용 — 매치·하이라이트가 보이는 텍스트와 일치한다.
 
 ### Target Flat Layout
 
