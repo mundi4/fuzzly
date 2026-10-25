@@ -183,7 +183,8 @@ if (meta?.preprocessVersion === PREPROCESS_VERSION) {
 }
 ```
 
-`PREPROCESS_VERSION`은 Target 레이아웃/atom 인코딩 구조가 바뀔 때만 bump된다.
+`PREPROCESS_VERSION`은 Target 레이아웃/atom 인코딩 구조, 또는 전처리 산출 값(예: 단어 경계
+구분자 집합)이 바뀌어 저장된 Target이 stale해질 때 bump된다.
 캐시 행마다 적지 말고 스토어 단위로 한 번만 기록하고, 무효화 판단은 소비자 몫이다.
 
 ## Scoring 커스터마이즈

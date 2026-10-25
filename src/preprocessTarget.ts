@@ -1,4 +1,4 @@
-import { DASH_ID, DOT_ID, SPACE_CHAR_CODE, SPACE_ID, UNDERSCORE_ID } from "./internal/atomRegistry";
+import { isBoundarySeparatorId, SPACE_CHAR_CODE, SPACE_ID } from "./internal/atomRegistry";
 import { eachGrapheme } from "./internal/segmenter";
 import { computeAtomRoles, decomposeToAtoms, foldCase } from "./internal/utils";
 import type { Atoms, Target, TargetWhitespaceMode } from "./types";
@@ -10,7 +10,7 @@ import type { Atoms, Target, TargetWhitespaceMode } from "./types";
  * hydrate할 수 있다. atom ID는 순수함수 산출이라 값 자체는 안정적이지만,
  * fuzzly 업그레이드로 **Target 필드 구성이나 atom 인코딩 구조**가 바뀌면
  * 저장된 Target이 조용히 호환 불가가 된다. 이 상수는 그 무효화 계약을 명시한다:
- * 구조가 바뀌면 bump한다.
+ * 구조, 또는 전처리 산출 값(normalizedInput, boundaryFlags 등)이 바뀌면 bump한다.
  *
  * **소비 계약**: 이 값을 **캐시 행마다** 적을 필요는 없다. 소비자는 스토어 단위로
  * 한 번만 기록해두고(예: IndexedDB의 meta 레코드 하나), 로드 시 불일치하면
@@ -18,11 +18,12 @@ import type { Atoms, Target, TargetWhitespaceMode } from "./types";
  * 이 버전 값만 노출한다. 같은 버전 안에서 두 공백 모드(`keep`/`transparent`)가
  * 공존하므로 **모드 식별은 버전이 아니라 `Target.whitespace` 필드**로 한다.
  *
- * 이력: v3 — `Target.whitespace` 필드 추가 + `preprocessTarget`의 `transparent` 모드 도입.
+ * 이력: v4 — 단어 경계 구분자에 `/` `\` `:` 추가 (`boundaryFlags` 산출 변경).
+ * v3 — `Target.whitespace` 필드 추가 + `preprocessTarget`의 `transparent` 모드 도입.
  * v2 — normalizedInput 산출이 `toLowerCase()`에서 길이보존·문맥무관 `foldCase`로
  * 변경 (İ 원문 유지, Σ/ς 통일). v1 시절 직렬화된 Target 은 좌표계·atom 인코딩이 다르다.
  */
-export const PREPROCESS_VERSION = 3;
+export const PREPROCESS_VERSION = 4;
 
 /**
  * 검색 대상 문자열을 grapheme 단위로 분해하고 flat typed array 레이아웃으로 저장한다.
@@ -147,7 +148,7 @@ export function preprocessTarget(input: string, opts?: { whitespace?: TargetWhit
         vowelIdxs[i] = vowelIndex;
         tailIdxs[i] = tailIndex;
 
-        // boundary 판별: 첫 grapheme이거나 직전 *방출* grapheme이 공백/밑줄/대시/점.
+        // boundary 판별: 첫 grapheme이거나 직전 *방출* grapheme이 구분자(isBoundarySeparatorId).
         // transparent 모드에선 공백이 방출되지 않으므로 "직전 원문 문자가 U+0020"으로
         // 스킵된 공백 경계를 판별한다 — 방출된 cluster는 U+0020으로 끝날 수 없어
         // (공백은 앞 cluster에 붙지 않음) 이 문자는 항상 스킵된 공백이다.
@@ -157,11 +158,8 @@ export function preprocessTarget(input: string, opts?: { whitespace?: TargetWhit
             boundaryFlags[i] = 1;
         } else {
             const prev = tmpAtomArrays[i - 1];
-            if (prev.length === 1) {
-                const pid = prev[0];
-                if (pid === SPACE_ID || pid === UNDERSCORE_ID || pid === DASH_ID || pid === DOT_ID) {
-                    boundaryFlags[i] = 1;
-                }
+            if (prev.length === 1 && isBoundarySeparatorId(prev[0])) {
+                boundaryFlags[i] = 1;
             }
         }
 

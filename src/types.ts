@@ -143,7 +143,7 @@ export interface Target {
     vowelIdxs: Int8Array;
     /** grapheme i의 tailIndex (-1 = 종성 없음) */
     tailIdxs: Int8Array;
-    /** 단어 경계 플래그 (0 또는 1) */
+    /** 단어 경계 플래그 (0 또는 1). 첫 grapheme, 그리고 공백 `_` `-` `.` `/` `\` `:` 바로 다음 grapheme이 1 */
     boundaryFlags: Uint8Array;
 
     // --- 인덱스 매핑 ---

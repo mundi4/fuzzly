@@ -46,7 +46,8 @@ atomsFlat: Uint16Array     — 전체 atom ID 연결
 atomStarts: Uint32Array    — grapheme i의 시작 offset
 atomLens: Uint8Array       — grapheme i의 atom 수 (cluster는 1보다 큼). 255 초과 시 RangeError (silent wrap 방지)
 vowelIdxs / tailIdxs: Int8Array — -1 = 없음
-boundaryFlags: Uint8Array  — 0/1
+boundaryFlags: Uint8Array  — 0/1. 첫 grapheme + 구분자(공백 _ - . / \ :) 바로 다음 grapheme
+                             (atomRegistry.isBoundarySeparatorId). `#`/`@`/`>` 같은 sigil은 소비자 몫이라 제외
 charIndexes / graphemeIndexes: Uint16Array — 입력 65535자 초과 시 RangeError (공백 포함 원문 길이 기준)
 ```
 
@@ -71,13 +72,14 @@ charIndexes/하이라이트 좌표계 보존) + 문맥무관(Final_Sigma ς→σ
 Target의 모든 필드가 `string | number | TypedArray`이므로 structuredClone/IDB 직접 저장 가능.
 atom ID가 순수함수 산출이라 세션·인스턴스 간 자동 일치 — 별도 매핑 저장/복원 불필요.
 
-**무효화 계약**: `PREPROCESS_VERSION` (export 상수)은 Target 레이아웃/atom 인코딩 구조가
-바뀔 때만 bump된다 (atom ID 값 자체는 순수함수라 안정 → 값 안정성엔 영향 없음).
+**무효화 계약**: `PREPROCESS_VERSION` (export 상수)은 Target 레이아웃/atom 인코딩 구조, 또는
+전처리 **산출 값**(normalizedInput, boundaryFlags 구분자 집합 등)이 바뀌어 저장된 Target이
+stale해질 때 bump된다 (atom ID 값 자체는 순수함수라 안정 → 값 안정성엔 영향 없음).
 fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. 소비자는 이 값을 **캐시 행마다
 적지 말고** 스토어 단위로 한 번만 기록(예: IDB meta 레코드 하나)해두고, 로드 시 불일치하면
 저장된 Target 전체를 재전처리한다.
 
-이력: v3 — `Target.whitespace` 필드 추가 + transparent 모드 도입. v2 — foldCase 전환.
+이력: v4 — 경계 구분자에 `/` `\` `:` 추가 (boundaryFlags 산출 변경). v3 — `Target.whitespace` 필드 추가 + transparent 모드 도입. v2 — foldCase 전환.
 같은 버전 안에서 두 공백 모드(`keep`/`transparent`)가 공존하므로 **버전만으로 모드 구분 불가** —
 hydrate된 Target의 모드 식별(소비자의 재인덱싱 판단)은 `Target.whitespace` 필드로 한다.
 

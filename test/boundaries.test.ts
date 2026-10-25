@@ -365,6 +365,24 @@ describe("graphemeCount boundary for typed arrays", () => {
         expect(target.boundaryFlags[7]).toBe(0); // dot
         expect(target.boundaryFlags[8]).toBe(1); // 'e' after dot
     });
+
+    it("boundaryFlags treats slash, backslash, colon as separators", () => {
+        const target = preprocessTarget("a/b\\c:d");
+        expect(Array.from(target.boundaryFlags)).toEqual([1, 0, 1, 0, 1, 0, 1]);
+    });
+
+    it("boundaryFlags does not treat '#' as a separator (sigils are consumer-side)", () => {
+        const target = preprocessTarget("boog#8");
+        expect(target.boundaryFlags[5]).toBe(0);
+    });
+
+    it("'/'-joined target scores like a dash-joined one", () => {
+        const q = buildQuery("wht");
+        const slash = matchBest(q, preprocessTarget("boogerworks/Whitespace"));
+        const dash = matchBest(q, preprocessTarget("boogerworks-Whitespace"));
+        expect(slash?.boundaryHits).toBe(1);
+        expect(slash?.score).toBe(dash?.score);
+    });
 });
 
 // ====================================================================
