@@ -31,9 +31,10 @@ atom ID는 **순수함수**로 산출 (글로벌 가변 상태 없음). 결정�
 LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적 영역(>128) ID는 OOB read → undefined → `=== 1` false. 의도된 동작.
 
 `decomposeToAtoms(ch)` → `Uint16Array` (interned via cache, `===` 참조동등 유효).
-NFD 한글(conjoining jamo cluster `ᄀ+ᅡ+ᆨ`)은 code unit마다 호환자모로 정규화해 NFC 음절과
-**같은 atom 시퀀스**를 낸다. 입력 자체를 NFC로 바꾸지 않는 이유: 길이가 바뀌어 원문 좌표계
-(charIndexes/하이라이트)가 깨진다 (foldCase 길이보존과 같은 원칙).
+atom은 **cluster의 NFC 형태**에서 뽑는다 (`ch.normalize("NFC")`, 캐시 키는 원문 cluster) —
+NFD 한글(`ᄀ+ᅡ+ᆨ`), 완성형+분리 종성(`가+ᆨ`), 결합 악센트(`e+◌́`)가 NFC와 같은 atom이 된다.
+입력 문자열 전체를 NFC로 바꾸지 않는 이유: 길이가 바뀌어 원문 좌표계(charIndexes/하이라이트)가
+깨진다 (foldCase 길이보존과 같은 원칙). literal 경로는 원문 substring이라 NFD 미대응 (#43).
 
 **충돌 (실 사용에선 미발생)**: 제어문자 U+0000-U+001F는 ID 0-31로 자모 영역과, U+007F/U+0080은 fixed ASCII와 충돌. command palette 텍스트엔 등장하지 않으므로 무시.
 

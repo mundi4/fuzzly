@@ -85,7 +85,8 @@ describe("atomLens 오버플로 가드 (issue #24)", () => {
     });
 
     it("255 이하 결합문자는 정상 처리", () => {
-        const ok = `a${"́".repeat(10)}`;
+        // q + ◌́ 는 NFC 합성형이 없어 cluster code unit 수 = atom 수 (a 였다면 á 로 합성돼 10)
+        const ok = `q${"́".repeat(10)}`;
         const t = preprocessTarget(ok);
         expect(t.graphemeCount).toBe(1);
         expect(t.atomLens[0]).toBe(11);
