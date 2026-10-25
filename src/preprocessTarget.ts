@@ -18,12 +18,13 @@ import type { Atoms, Target, TargetWhitespaceMode } from "./types";
  * 이 버전 값만 노출한다. 같은 버전 안에서 두 공백 모드(`keep`/`transparent`)가
  * 공존하므로 **모드 식별은 버전이 아니라 `Target.whitespace` 필드**로 한다.
  *
- * 이력: v4 — 단어 경계 구분자에 `/` `\` `:` 추가 (`boundaryFlags` 산출 변경).
+ * 이력: v5 — NFD 한글(conjoining jamo cluster)의 모음·종성 atom 유실 수정 (#22).
+ * v4 — 단어 경계 구분자에 `/` `\` `:` 추가 (`boundaryFlags` 산출 변경).
  * v3 — `Target.whitespace` 필드 추가 + `preprocessTarget`의 `transparent` 모드 도입.
  * v2 — normalizedInput 산출이 `toLowerCase()`에서 길이보존·문맥무관 `foldCase`로
  * 변경 (İ 원문 유지, Σ/ς 통일). v1 시절 직렬화된 Target 은 좌표계·atom 인코딩이 다르다.
  */
-export const PREPROCESS_VERSION = 4;
+export const PREPROCESS_VERSION = 5;
 
 /**
  * 검색 대상 문자열을 grapheme 단위로 분해하고 flat typed array 레이아웃으로 저장한다.

@@ -271,6 +271,11 @@ export function computeAtomRoles(atoms: Atoms): { vowelIndex: number; tailIndex:
     return { vowelIndex, tailIndex };
 }
 
+// conjoining jamo(U+1100-U+11FF, NFD 분해형) 또는 호환자모(U+3130-U+318F)
+function isJamoCode(code: number): boolean {
+    return (code >= 0x1100 && code <= 0x11ff) || (code >= 0x3130 && code <= 0x318f);
+}
+
 // intern cache
 const atomsCache = new Map<string, Atoms>();
 
@@ -311,13 +316,25 @@ export function decomposeToAtoms(ch: string): Atoms {
     }
 
     // 2) 자모(초/중/종 + 호환자모)
-    else if ((code >= 0x1100 && code <= 0x11ff) || (code >= 0x3130 && code <= 0x318f)) {
-        const norm = normalizeCharToCompat(ch);
-        const mid = splitVowel(norm);
-        const broken = splitTail(mid);
-        for (let i = 0; i < broken.length; i++) {
-            buildBuf[len++] = atomCharToId(broken[i]);
+    // NFD 음절(ᄀ+ᅡ+ᆨ)은 grapheme 하나가 code unit 여럿이므로 code unit마다 호환자모로
+    // 정규화해 이어 붙인다 — NFC 음절과 같은 atom 시퀀스가 된다 (issue #22).
+    // 길이 상한이 없으므로(비정상 L/V/T 연쇄) buildBuf 대신 가변 배열에 쌓는다.
+    else if (isJamoCode(code)) {
+        const out: number[] = [];
+        for (let i = 0; i < ch.length; i++) {
+            const unit = ch[i];
+            if (!isJamoCode(ch.charCodeAt(i))) {
+                out.push(atomCharToId(unit));
+                continue;
+            }
+            const broken = splitTail(splitVowel(normalizeCharToCompat(unit)));
+            for (let j = 0; j < broken.length; j++) {
+                out.push(atomCharToId(broken[j]));
+            }
         }
+        const ret = Uint16Array.from(out);
+        atomsCache.set(ch, ret);
+        return ret;
     }
 
     // 3) 그 외 (ASCII single, BMP CJK/이모지, non-BMP, multi-codepoint cluster)

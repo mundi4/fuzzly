@@ -274,8 +274,8 @@ describe("preprocessTarget whitespace: 'transparent'", () => {
     });
 
     describe("버전", () => {
-        it("PREPROCESS_VERSION === 4", () => {
-            expect(PREPROCESS_VERSION).toBe(4);
+        it("PREPROCESS_VERSION === 5", () => {
+            expect(PREPROCESS_VERSION).toBe(5);
         });
     });
 });

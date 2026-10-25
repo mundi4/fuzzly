@@ -31,6 +31,9 @@ atom ID는 **순수함수**로 산출 (글로벌 가변 상태 없음). 결정�
 LUT (`isVowelLUT`/`isConsonantLUT`/`isHangulJamoLUT`)는 Uint8Array(256). 동적 영역(>128) ID는 OOB read → undefined → `=== 1` false. 의도된 동작.
 
 `decomposeToAtoms(ch)` → `Uint16Array` (interned via cache, `===` 참조동등 유효).
+NFD 한글(conjoining jamo cluster `ᄀ+ᅡ+ᆨ`)은 code unit마다 호환자모로 정규화해 NFC 음절과
+**같은 atom 시퀀스**를 낸다. 입력 자체를 NFC로 바꾸지 않는 이유: 길이가 바뀌어 원문 좌표계
+(charIndexes/하이라이트)가 깨진다 (foldCase 길이보존과 같은 원칙).
 
 **충돌 (실 사용에선 미발생)**: 제어문자 U+0000-U+001F는 ID 0-31로 자모 영역과, U+007F/U+0080은 fixed ASCII와 충돌. command palette 텍스트엔 등장하지 않으므로 무시.
 
@@ -79,7 +82,7 @@ fuzzly는 이 버전만 노출하고, 무효화 판단은 소비자 몫이다. �
 적지 말고** 스토어 단위로 한 번만 기록(예: IDB meta 레코드 하나)해두고, 로드 시 불일치하면
 저장된 Target 전체를 재전처리한다.
 
-이력: v4 — 경계 구분자에 `/` `\` `:` 추가 (boundaryFlags 산출 변경). v3 — `Target.whitespace` 필드 추가 + transparent 모드 도입. v2 — foldCase 전환.
+이력: v5 — NFD 한글 cluster의 모음·종성 atom 유실 수정 (#22). v4 — 경계 구분자에 `/` `\` `:` 추가 (boundaryFlags 산출 변경). v3 — `Target.whitespace` 필드 추가 + transparent 모드 도입. v2 — foldCase 전환.
 같은 버전 안에서 두 공백 모드(`keep`/`transparent`)가 공존하므로 **버전만으로 모드 구분 불가** —
 hydrate된 Target의 모드 식별(소비자의 재인덱싱 판단)은 `Target.whitespace` 필드로 한다.
 
