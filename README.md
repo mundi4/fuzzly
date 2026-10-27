@@ -10,9 +10,13 @@
 
 ## 설치
 
-```bash
-npm i fuzzly
+npm 레지스트리에는 올라가 있지 않다. 릴리스 태그를 git으로 설치한다:
+
+```json
+"fuzzly": "github:mundi4/fuzzly#v1.1.1"
 ```
+
+태그로만 설치된다. 빌드된 `dist/`는 태그 커밋에 들어 있고 `main`에는 없다.
 
 ## Quickstart
 

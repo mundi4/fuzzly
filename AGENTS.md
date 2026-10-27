@@ -15,6 +15,21 @@ npm run bench       # vitest bench (bench/*.bench.ts — DP pathological, 10k co
 
 소스/테스트 수정 후 커밋 전에 `npm run check:fix` + `npm test` 실행.
 
+## Release / 배포
+
+npm 레지스트리에는 올리지 않는다. **git 태그로 배포**하고, 받는 쪽은 빌드 없이 설치한다.
+
+```bash
+tools/release.sh X.Y.Z      # 로컬에 v<X.Y.Z> 태그 생성 (push 안 함)
+git push origin vX.Y.Z      # 올리기 (사용자 승인 후)
+```
+
+- 소비자: `"fuzzly": "github:mundi4/fuzzly#vX.Y.Z"`. **태그로만 설치된다** — `dist/`는 `main`에 없고(gitignore) 태그 커밋에만 있다.
+- `prepare` 스크립트는 두지 않는다. 두면 git 설치 때 소비자 쪽에서 devDependencies(tsup)까지 받아 빌드하게 된다.
+- `release.sh`: 커밋 안 된 변경이 없는 브랜치에서 실행 → `tsc --noEmit`, `npm test`, `npm run build`, `tools/pack-check.sh` → detached HEAD에서 version + `dist`(`git add -f`)만 더한 `release vX.Y.Z` 커밋을 만들고 태그. 브랜치는 움직이지 않고 릴리스 커밋은 태그로만 닿는다.
+- `pack-check.sh`: `npm pack` 내용이 `package.json`/README/`dist`뿐인지, `exports`가 가리키는 파일이 모두 있는지, tarball을 빈 폴더에 설치해 ESM import·CJS require가 되는지 확인.
+- 비공개 저장소면 설치하는 기계에 GitHub 접근(credential/SSH)이 필요하다.
+
 ## Key Architecture
 
 ### Atom ID System (`internal/atomRegistry.ts`)
