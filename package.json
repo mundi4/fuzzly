@@ -1,6 +1,6 @@
 {
   "name": "fuzzly",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "한글 초성·부분 조합·IME 중간상태까지 매칭하는 커맨드팔레트용 퍼지 매칭 라이브러리 (Korean-aware fuzzy matching for command palettes)",
   "exports": {
